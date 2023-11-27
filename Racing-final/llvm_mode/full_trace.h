@@ -59,6 +59,11 @@ public:
   unsigned line, column;
   bool hasBeenInstrumented;
   std::map<std::string, std::map<std::string, int>> inst_id_map;
+  struct BBInfo {
+    std::string firstInst;
+    std::string lastInst;
+  };
+  std::map<uint32_t, struct BBInfo> bb_id_map;
   static char ID;
   
 };

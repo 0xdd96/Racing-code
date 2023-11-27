@@ -183,9 +183,17 @@ void Tracer::dofinish() {
     for (const auto& instructionEntry : sourceCodeInfoEntry.second) {
       const std::string& instruction = instructionEntry.first;
       int instructionID = instructionEntry.second;
-      *trace_id_steam << sourceCodeInfo << " ###### " << instruction << " ###### " << instructionID << "\n";
+      *trace_id_steam << "[Inst Info] " << instructionID << " ###### " << instruction << " ###### " << sourceCodeInfo << "\n";
     }
   }
+
+  for (const auto& entry : bb_id_map) {
+    uint32_t bbID = entry.first;
+    struct BBInfo info = entry.second;
+
+    *trace_id_steam << "[BB Info] " << bbID << " ###### " << info.firstInst << " ###### " << info.lastInst << "\n";
+  }
+
   trace_id_steam->close();
 }
 
@@ -240,6 +248,15 @@ bool Tracer::runOnFunction(Function &F, std::vector<std::string> &target) {
   }
 
   for(auto it=recorded_bb.begin(); it!=recorded_bb.end(); it++)	{
+    std::string tmp_filename;
+    unsigned tmp_line, tmp_column;
+    struct BBInfo tmp_bb_info;
+    getDebugLoc(cast<Instruction>(it->first->begin()), tmp_filename, tmp_line, tmp_column);
+    tmp_bb_info.firstInst = tmp_filename + ':' + std::to_string(tmp_line);
+    getDebugLoc(cast<Instruction>(--(it->first->end())), tmp_filename, tmp_line, tmp_column);
+    tmp_bb_info.lastInst = tmp_filename + ':' + std::to_string(tmp_line);
+    bb_id_map[bb_id] = tmp_bb_info;
+
     BasicBlock::iterator IP = (*(it->first)).getFirstInsertionPt();
     IRBuilder<> IRB(&(*IP));
     u16 cnt_SuccBB =it->second;

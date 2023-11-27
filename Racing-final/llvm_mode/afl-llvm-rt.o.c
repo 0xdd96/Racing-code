@@ -58,52 +58,28 @@
    is used for instrumentation output before __afl_map_shm() has a chance to
    run. It will end up as .comm, so it shouldn't be too wasteful. */
 
-// val: size  -----  offset
-// coverage: MAP_SIZE  -----  0
-// min_value: inst_size * 8  -----  MAP_SIZE
-// max_value: inst_size * 8  -----  MAP_SIZE+INST_SIZE*8
-// is_set: inst_size  -----  MAP_SIZE+INST_SIZE*16
-// all_count+inst_seq: (inst_size+1) * 4  -----  MAP_SIZE+INST_SIZE*17
-// stack+heap: 8*4  -----  MAP_SIZE+INST_SIZE*21+4
-// last id: 8  -----  MAP_SIZE+INST_SIZE*21+36
-// all  -----  MAP_SIZE+INST_SIZE*21+4+8*4 = MAP_SIZE+INST_SIZE*21+44
-// -----------------------------------------------------------
-// bb_start_index: MAP_SIZE*4 ----- MAP_SIZE+INST_SIZE*21+44
-// bb_cnt_succ: MAP_SIZE*2 ----- MAP_SIZE*5+INST_SIZE*21+44
-// last bb: 4  -----  MAP_SIZE*7+INST_SIZE*21+44
-// edge info: MAP_SIZE*4*8  -----  MAP_SIZE*7+INST_SIZE*21+48
-// bb_id to inst_id: MAP_SIZE*4 -----  MAP_SIZE*39+INST_SIZE*21+48
-// all  -----  MAP_SIZE*43+INST_SIZE*21+48
-// -----------------------------------------------------------
-// eflags: INST_SIZE*8 -----  MAP_SIZE*43+INST_SIZE*21+48
-// all  -----  MAP_SIZE*43+INST_SIZE*29+48
-
 struct exec_info
 {
   u8 coverage[MAP_SIZE];
   u64 min_value[INST_SIZE];
   u64 max_value[INST_SIZE];
-  u8 is_visited[INST_SIZE];
   u32 exec_inst_cnt;
-  u32 inst_exec_order[INST_SIZE];
-  u64 stack_start;
-  u64 stack_end;
-  u64 heap_start;
-  u64 heap_end;
+  u64 eflag[INST_SIZE];
   u64 last_inst_id;
   //cfg
   u32 bb_start_index[MAP_SIZE];
   u16 bb_succ_cnt[MAP_SIZE];
-  u32 last_bb_id;
   u32 exec_edge_info[MAP_SIZE*8];
-  u64 bb_to_inst[MAP_SIZE];
-  //eflag
-  u64 eflag[INST_SIZE];
+  u32 last_bb_id;
+
+  u32 exec_order[INST_SIZE+MAP_SIZE];
+  u8 is_visited[INST_SIZE+MAP_SIZE];
+
+  u64 stack_start;
+  u64 stack_end;
+  u64 heap_start;
+  u64 heap_end;
 };
-
-
-//u8 __afl_area_initial[MAP_SIZE*43+INST_SIZE*29+48];
-//u8 *__afl_area_ptr = __afl_area_initial;
 
 struct exec_info __afl_area_initial;
 struct exec_info * __afl_area_ptr = &__afl_area_initial;
@@ -408,8 +384,8 @@ void trace_value(uint64_t value, uint64_t id) {
   }
 
   __afl_area_ptr->exec_inst_cnt++;
-  if (__afl_area_ptr->inst_exec_order[id] == 0)
-    __afl_area_ptr->inst_exec_order[id] = __afl_area_ptr->exec_inst_cnt;
+  if (__afl_area_ptr->exec_order[id] == 0)
+    __afl_area_ptr->exec_order[id] = __afl_area_ptr->exec_inst_cnt;
   
   __afl_area_ptr->last_inst_id = id;
 
@@ -439,7 +415,10 @@ void trace_edge(uint32_t id, uint32_t index, u16 cnt_succ) {
     }
   }
 
-  __afl_area_ptr->bb_to_inst[__afl_area_ptr->last_bb_id] = __afl_area_ptr->last_inst_id;
+  __afl_area_ptr->is_visited[INST_SIZE+id] = 1;
+  if (__afl_area_ptr->exec_order[INST_SIZE+id] == 0)
+    __afl_area_ptr->exec_order[INST_SIZE+id] = __afl_area_ptr->exec_inst_cnt;
+
   __afl_area_ptr->bb_start_index[id] = index;
   __afl_area_ptr->bb_succ_cnt[id] = cnt_succ;
   __afl_area_ptr->last_bb_id = id;
