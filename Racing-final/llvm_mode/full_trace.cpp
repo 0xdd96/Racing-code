@@ -178,16 +178,19 @@ void Tracer::dofinish() {
   }
   trace_id_steam->close();
   */
-  for (const auto& sourceCodeInfoEntry : inst_id_map) {
-    const std::string& sourceCodeInfo = sourceCodeInfoEntry.first;
-    for (const auto& instructionEntry : sourceCodeInfoEntry.second) {
-      const std::string& instruction = instructionEntry.first;
+  for (auto sourceCodeInfoEntry : inst_id_map) {
+    std::string sourceCodeInfo = sourceCodeInfoEntry.first;
+    for (auto instructionEntry : sourceCodeInfoEntry.second) {
+      std::string instruction = instructionEntry.first;
       int instructionID = instructionEntry.second;
+      if (instruction.size() > 200)
+        instruction = instruction.substr(0, 200);
+      
       *trace_id_steam << "[Inst Info] " << instructionID << " ###### " << instruction << " ###### " << sourceCodeInfo << "\n";
     }
   }
 
-  for (const auto& entry : bb_id_map) {
+  for (auto entry : bb_id_map) {
     uint32_t bbID = entry.first;
     struct BBInfo info = entry.second;
 
