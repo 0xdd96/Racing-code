@@ -65,15 +65,15 @@ struct exec_info
   u64 max_value[INST_SIZE];
   u32 exec_inst_cnt;
   u64 eflag[INST_SIZE];
-  u64 last_inst_id;
+  u32 last_inst_id;
   //cfg
-  u32 bb_start_index[MAP_SIZE];
-  u16 bb_succ_cnt[MAP_SIZE];
-  u32 exec_edge_info[MAP_SIZE*8];
+  u32 bb_start_index[BB_SIZE];
+  u16 bb_succ_cnt[BB_SIZE];
+  u32 exec_edge_info[BB_SIZE*4];
   u32 last_bb_id;
 
-  u32 exec_order[INST_SIZE+MAP_SIZE];
-  u8 is_visited[INST_SIZE+MAP_SIZE];
+  u32 exec_order[INST_SIZE+BB_SIZE];
+  u8 is_visited[INST_SIZE+BB_SIZE];
 
   u64 stack_start;
   u64 stack_end;
@@ -133,14 +133,14 @@ void read_procmap(s32 pid) {
   u64 start, end;
 
   while (fgets(line, 2048, fp) != NULL) {
-    if (strstr(line, "stack") != NULL) {
+    if (strstr(line, "[stack]") != NULL) {
       end = strtol(line + 13, line + 25, 16);
       start = strtol(line, line + 12, 16);
 
       __afl_area_ptr->stack_start = start;
       __afl_area_ptr->stack_end = end;
     }
-    if (strstr(line, "heap") != NULL) {
+    if (strstr(line, "[heap]") != NULL) {
       end = strtol(line + 9, line + 17, 16);
       start = strtol(line, line + 8, 16);
 
@@ -370,7 +370,11 @@ void __sanitizer_cov_trace_pc_guard_init(uint32_t *start, uint32_t *stop) {
   }
 }
 
-void trace_value(uint64_t value, uint64_t id) {
+void trace_value(uint64_t value, uint32_t id) {
+  __afl_area_ptr->exec_inst_cnt++;
+  __afl_area_ptr->last_inst_id = id;
+  __afl_area_ptr->exec_order[id] = __afl_area_ptr->exec_inst_cnt;
+
   if (__afl_area_ptr->is_visited[id]) {
     if (value < __afl_area_ptr->min_value[id])
       __afl_area_ptr->min_value[id] = value;
@@ -383,17 +387,11 @@ void trace_value(uint64_t value, uint64_t id) {
     __afl_area_ptr->is_visited[id] = 1;
   }
 
-  __afl_area_ptr->exec_inst_cnt++;
-  if (__afl_area_ptr->exec_order[id] == 0)
-    __afl_area_ptr->exec_order[id] = __afl_area_ptr->exec_inst_cnt;
-  
-  __afl_area_ptr->last_inst_id = id;
-
   return;
 }
 
 
-void trace_register(uint64_t value, uint64_t id) {
+void trace_register(uint64_t value, uint32_t id) {
   __afl_area_ptr->eflag[id] = __afl_area_ptr->eflag[id] | value;
   return;
 }
@@ -416,8 +414,8 @@ void trace_edge(uint32_t id, uint32_t index, u16 cnt_succ) {
   }
 
   __afl_area_ptr->is_visited[INST_SIZE+id] = 1;
-  if (__afl_area_ptr->exec_order[INST_SIZE+id] == 0)
-    __afl_area_ptr->exec_order[INST_SIZE+id] = __afl_area_ptr->exec_inst_cnt;
+  //if (__afl_area_ptr->exec_order[INST_SIZE+id] == 0)
+  __afl_area_ptr->exec_order[INST_SIZE+id] = __afl_area_ptr->exec_inst_cnt;
 
   __afl_area_ptr->bb_start_index[id] = index;
   __afl_area_ptr->bb_succ_cnt[id] = cnt_succ;

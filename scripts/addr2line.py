@@ -40,7 +40,7 @@ if __name__ == "__main__":
         source_line = output.split(' at ')[1].split(' ')[0].split('\n')[0]
         if source_line not in source_lines:
             source_lines.append(source_line)
-        
+
 
     with open(out_file, 'w') as f:
         for line in source_lines:

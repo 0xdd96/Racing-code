@@ -158,15 +158,15 @@ struct exec_info
   u64 max_value[INST_SIZE];
   u32 exec_inst_cnt;
   u64 eflag[INST_SIZE];
-  u64 last_inst_id;
+  u32 last_inst_id;
   //cfg
-  u32 bb_start_index[MAP_SIZE];
-  u16 bb_succ_cnt[MAP_SIZE];
-  u32 exec_edge_info[MAP_SIZE*8];
+  u32 bb_start_index[BB_SIZE];
+  u16 bb_succ_cnt[BB_SIZE];
+  u32 exec_edge_info[BB_SIZE*4];
   u32 last_bb_id;
 
-  u32 exec_order[INST_SIZE+MAP_SIZE];
-  u8 is_visited[INST_SIZE+MAP_SIZE];
+  u32 exec_order[INST_SIZE+BB_SIZE];
+  u8 is_visited[INST_SIZE+BB_SIZE];
 
   u64 stack_start;
   u64 stack_end;
@@ -178,7 +178,7 @@ struct exec_info*trace_bits; /* SHM with instrumentation bitmap  */
 
 EXP_ST u8 virgin_bits[MAP_SIZE], /* Regions yet untouched by fuzzing */
     virgin_tmout[MAP_SIZE],      /* Bits we haven't seen in tmouts   */
-    virgin_bits_crashes[INST_SIZE*96+MAP_SIZE*32], virgin_bits_non_crashes[INST_SIZE*96+MAP_SIZE*32],
+    virgin_bits_crashes[INST_SIZE*96+BB_SIZE*32], virgin_bits_non_crashes[INST_SIZE*96+BB_SIZE*32],
     virgin_crash[MAP_SIZE]; /* Bits we haven't seen in crashes  */
 
 static u8 var_bytes[MAP_SIZE]; /* Bytes that appear to be variable */
@@ -408,7 +408,7 @@ static inline u32 UR(u32 limit) {
 /**********************
  * Racing variables
  **********************/
-u32 top_k = 100;
+#define TOP_K 100
 
 enum Predicate {
     MIN_VAL_LEQ,
@@ -423,27 +423,24 @@ enum Predicate {
     DIRECTION_FLAG_SET,
     OVERFLOW_FLAG_SET,
     HAS_EDGE_TO,
-    EDGE_ONLY_TAKEN_TO,
     NUM_SUCCESSORS_GT,
-    NUM_SUCCESSORS_EQ,
-    IS_VISITED,
+    //IS_VISITED,
     NULL_PREDICATE
 };
 
-double predicate_score[INST_SIZE+MAP_SIZE];    // score of predicate
-u64 predicate_boundary[INST_SIZE+MAP_SIZE];    // boundary of predicate
-enum Predicate predicate_type[INST_SIZE+MAP_SIZE];  // type of predicate
-u32 predicate_seq[INST_SIZE+MAP_SIZE];
+double predicate_score[INST_SIZE+BB_SIZE];    // score of predicate
+u64 predicate_boundary[INST_SIZE+BB_SIZE];    // boundary of predicate
+enum Predicate predicate_type[INST_SIZE+BB_SIZE];  // type of predicate
+double predicate_seq[INST_SIZE+BB_SIZE];
 
 u32 new_counterexample_for_predicate_cnt = 0;    // counter for predicates with counterexample
 double counterexample_rate = 0;
 u64 mutation_inputs = 0;
 
-u32 target_predicate[INST_SIZE+MAP_SIZE];   // id of target instruction
-u32 target_predicate_cnt = 0;
+u32 target_predicate[TOP_K];   // id of target instruction
 
-double cumulative_predicate_reward[INST_SIZE+MAP_SIZE];
-u32 predicate_selected_cnt[INST_SIZE+MAP_SIZE];
+double cumulative_predicate_reward[INST_SIZE+BB_SIZE];
+u32 predicate_selected_cnt[INST_SIZE+BB_SIZE];
 double backup_cumulative_predicate_reward;
 u32 backup_predicate_selected_cnt;
 u32 selected_predicate=0xffffffff;
@@ -452,41 +449,39 @@ double predicate_selection_gamma = 0.5;
 double predicate_selection_adaptive = 0;
 double p_selected_predicate = 0;
 
-double *avg_predicate_rewards = NULL;
-double *d_predicate = NULL, *d_predicate_prime = NULL;
+double avg_predicate_rewards[TOP_K];
+double d_predicate[TOP_K], d_predicate_prime[TOP_K];
 
 static void select_predicate(void){
   double all_reward = 0;
-  target_predicate_cnt = 0;
-  for (u32 k = 0; k < INST_SIZE+MAP_SIZE; k++) {
-    if (target_predicate[k] == 0xffffffff)
-      break;
-    target_predicate_cnt++;
+  for (u32 k = 0; k < TOP_K; k++) {
     u32 i = target_predicate[k];
+    if(i==0xffffffff)
+      break;
     all_reward += exp(predicate_selected_cnt[i]? cumulative_predicate_reward[i]/predicate_selected_cnt[i]: 0);
   }
 
-  d_predicate = ck_realloc(d_predicate, sizeof(double)*target_predicate_cnt);
-  memset(d_predicate, 0, sizeof(double)*target_predicate_cnt);
+  memset(d_predicate, 0, sizeof(double)*TOP_K);
 
-  for (u32 k = 0; k < target_predicate_cnt; k++) {
+  for (u32 k = 0; k < TOP_K; k++) {
     u32 i = target_predicate[k];
+    if(i==0xffffffff)
+      break;
     if(all_reward>0)
       d_predicate[k] = exp(predicate_selected_cnt[i]? cumulative_predicate_reward[i]/predicate_selected_cnt[i]: 0)/all_reward;
     else
-      d_predicate[k]=1.000/target_predicate_cnt;
+      d_predicate[k]=1.000/TOP_K;
   }
 }
 
 static u32 sample_predicate(void){
-  d_predicate_prime = ck_realloc(d_predicate_prime, sizeof(double)*target_predicate_cnt);
-  for(u32 k=0; k<target_predicate_cnt; k++)
-    d_predicate_prime[k] = (1-predicate_selection_gamma)*d_predicate[k]+predicate_selection_gamma/target_predicate_cnt;
+  for(u32 k=0; k<TOP_K; k++)
+    d_predicate_prime[k] = (1-predicate_selection_gamma)*d_predicate[k]+predicate_selection_gamma/TOP_K;
 
   u32 predicate_id = 0xffffffff;
   double random_double = UR(RAND_MAX)*1.0000/RAND_MAX;
   double p_sum = 0;
-  for(u32 k=0; k<target_predicate_cnt; k++){
+  for(u32 k=0; k<TOP_K; k++){
     p_sum += d_predicate_prime[k];
     if(random_double<p_sum){
       predicate_id = target_predicate[k];
@@ -498,8 +493,11 @@ static u32 sample_predicate(void){
 }
 
 static void update_predicate_state(double reward){
-  for(u32 i=0;i<INST_SIZE+MAP_SIZE;i++){
-    if (queue_cur && (!queue_cur->trace_bits->is_visited[i]))
+  if(!queue_cur)
+    return;
+
+  for(u32 i=0;i<INST_SIZE+BB_SIZE;i++){
+    if (!queue_cur->trace_bits->is_visited[i])
       continue;
     cumulative_predicate_reward[i]+=reward;
     predicate_selected_cnt[i]++;
@@ -510,14 +508,15 @@ static void update_predicate_selection_gamma(void) {
   double avg_reward=0;
   if(selected_predicate!=0xffffffff && predicate_selected_cnt[selected_predicate]!=backup_predicate_selected_cnt){
     avg_reward = (cumulative_predicate_reward[selected_predicate]-backup_cumulative_predicate_reward)/(predicate_selected_cnt[selected_predicate]-backup_predicate_selected_cnt);
+    predicate_selection_gamma = TOP_K/(2*TOP_K+predicate_selection_adaptive);
     predicate_selection_adaptive+=predicate_selection_gamma*avg_reward/p_selected_predicate;
-    predicate_selection_gamma = target_predicate_cnt/(2*target_predicate_cnt+predicate_selection_adaptive);
   }
   return;
 }
 
 
 size_t head_bytes_size = 2000;
+//u8 loc_greater_than_head_bytes_size;
 double* cumulative_loc_reward=NULL;
 u32* loc_selected_cnt=NULL;
 u8* loc_selected_map=NULL;
@@ -592,8 +591,8 @@ static void update_loc_selection_gamma(double reward) {
   if(p_selected_loc_cnt)
     avg_p_selected_loc = p_selected_loc/p_selected_loc_cnt;
   
-  loc_selection_adaptive+=loc_selection_gamma*reward/avg_p_selected_loc;
   loc_selection_gamma = target_loc_cnt*1.000/(2*target_loc_cnt+loc_selection_adaptive);
+  loc_selection_adaptive+=loc_selection_gamma*reward/avg_p_selected_loc;
   return;
 }
 
@@ -669,8 +668,8 @@ static void update_op_selected_gamma(double reward) {
   if(p_selected_op_cnt)
     avg_p_selected_op = p_selected_op/p_selected_op_cnt;
   
-  op_selected_adaptive+=op_selected_gamma*reward/avg_p_selected_op;
   op_selected_gamma = target_op_cnt*1.000/(2*target_op_cnt+op_selected_adaptive);
+  op_selected_adaptive+=op_selected_gamma*reward/avg_p_selected_op;
   return;
 }
 
@@ -719,18 +718,17 @@ char value_of_reg_bit(size_t reg_value, unsigned long long pos) {
 struct control_flow_info {
   u32 crash_count;
   u32 non_crash_count;
-  struct value_info *is_visited;
+  //struct value_info *is_visited;
   struct value_info *num_successors;
   struct value_info *has_edge_to;
-  struct value_info *always_taken_to;
 };
-struct control_flow_info global_bb_info[MAP_SIZE];
+struct control_flow_info global_bb_info[BB_SIZE];
 
 struct bb_source_info{
     char BBstartSourceCodeInfo[50];
     char BBendSourceCodeInfo[50];
 };
-struct bb_source_info global_bb_source_info[MAP_SIZE];
+struct bb_source_info global_bb_source_info[BB_SIZE];
 // -------------------------------------------------------
 
 
@@ -741,6 +739,7 @@ struct rank_info
 {
   u64 update_time;
   u64 inputs_count;
+  u64 cycle;
   u32 * rank_ids;
   double rank_distance;
   struct rank_info * next;
@@ -748,7 +747,7 @@ struct rank_info
 struct rank_info * global_rank_info=NULL;
 
 u64 stack_start = 0xffffffffffffffff, stack_end = 0, heap_start = 0xffffffffffffffff, heap_end = 0;
-u64 global_last_id=0xffffffffffffffff;
+u64 global_last_id=0xffffffff;
 
 
 static void update_sorted_value_info(struct value_info **list, u64 value, u8 label) {
@@ -822,11 +821,20 @@ static void update_unsorted_value_info(struct value_info **list, u64 value, u8 l
 
 static void add_to_global_values(u8 label) {
   if (label) {
+    ///*
     if(global_crash_count==0){
-      for (u32 j = 0; j < INST_SIZE+MAP_SIZE; j++)
+      for (u32 j = 0; j < INST_SIZE+BB_SIZE; j++)
         predicate_seq[j] = trace_bits->exec_order[j];
       global_last_id = trace_bits->last_inst_id;
     }
+    //*/
+    /*
+    if(global_crash_count==0)
+      global_last_id = trace_bits->last_inst_id;
+    
+    for (u32 j = 0; j < INST_SIZE+BB_SIZE; j++)
+      predicate_seq[j] = (predicate_seq[j]*global_crash_count + trace_bits->is_visited[j]?trace_bits->exec_order[j]:trace_bits->exec_inst_cnt)/(global_crash_count+1);
+    */
     global_crash_count++;
   } else
     global_non_crash_count++;
@@ -876,19 +884,27 @@ static void add_to_global_values(u8 label) {
     i += 1;
   }
 
-  i = 1;
-  while (i < MAP_SIZE) {
+  i = 0;
+  while ((++i) < BB_SIZE) {
+    u16 cnt_succ = trace_bits->bb_succ_cnt[i];
+    if(cnt_succ==0)
+      continue;
+    /*
     if (trace_bits->is_visited[INST_SIZE+i]== 0) {
       update_sorted_value_info(&global_bb_info[i].is_visited, 0, label);
-      i++;
       continue;
-    }    
+    }*/   
 
-    u32 start_index = trace_bits->bb_start_index[i];
-    u16 cnt_succ = trace_bits->bb_succ_cnt[i];
+    if (label)
+      global_bb_info[i].crash_count++;
+    else
+      global_bb_info[i].non_crash_count++;
+
+    //update_sorted_value_info(&global_bb_info[i].is_visited, 1, label);
 
     u32 exec_cnt_succ= 0;
     u32 edge_to=0;
+    u32 start_index = trace_bits->bb_start_index[i];
     for(u32 j=start_index; j<start_index+cnt_succ; j++){
       if(trace_bits->exec_edge_info[j]){
         edge_to = trace_bits->exec_edge_info[j];
@@ -898,23 +914,14 @@ static void add_to_global_values(u8 label) {
         break;
     }
 
-    if(cnt_succ){
-      if (label)
-        global_bb_info[i].crash_count++;
-      else
-        global_bb_info[i].non_crash_count++;
-
-      update_sorted_value_info(&global_bb_info[i].is_visited, 1, label);
-      update_sorted_value_info(&global_bb_info[i].num_successors, exec_cnt_succ, label);
-      if(exec_cnt_succ==1)
-        update_unsorted_value_info(&global_bb_info[i].always_taken_to, edge_to, label);
-    }
-    i++;
+    update_sorted_value_info(&global_bb_info[i].num_successors, exec_cnt_succ, label);
   }
   return;
 }
 
 int is_stack(u64 v) {
+  if((v & 0xffff7ffff0000000) == 0x7ffff0000000)
+    return 1;
   return v >= stack_start && v <= stack_end;
 }
 
@@ -924,6 +931,7 @@ int is_heap(u64 v) {
   return v >= heap_start && v <= heap_end;
 }
 
+
 double compute_reward(){
   struct rank_info * last_rank = global_rank_info;
   if(last_rank==NULL)
@@ -932,21 +940,21 @@ double compute_reward(){
   if(pre_rank==NULL)
     return 0;
 
-  u32 last_rank_vec[INST_SIZE+MAP_SIZE];
-  u32 pre_rank_vec[INST_SIZE+MAP_SIZE];
+  u32 last_rank_vec[INST_SIZE+BB_SIZE];
+  u32 pre_rank_vec[INST_SIZE+BB_SIZE];
   u32 union_rank_ids[200];
   u32 union_cnt = 0;
 
-  memset(last_rank_vec, 0xff, sizeof(u32)*(INST_SIZE+MAP_SIZE));
-  memset(pre_rank_vec, 0xff, sizeof(u32)*(INST_SIZE+MAP_SIZE));
+  memset(last_rank_vec, 0xff, sizeof(u32)*(INST_SIZE+BB_SIZE));
+  memset(pre_rank_vec, 0xff, sizeof(u32)*(INST_SIZE+BB_SIZE));
   memset(union_rank_ids, 0xff, sizeof(u32)*200);
 
-  for(u32 i=0; i<top_k && last_rank->rank_ids[i]!=0xffffffff; i++){
+  for(u32 i=0; i<TOP_K && last_rank->rank_ids[i]!=0xffffffff; i++){
     last_rank_vec[last_rank->rank_ids[i]] = i;
     union_rank_ids[union_cnt++] = last_rank->rank_ids[i];
   }
   
-  for(u32 i=0; i<top_k && pre_rank->rank_ids[i]!=0xffffffff; i++){
+  for(u32 i=0; i<TOP_K && pre_rank->rank_ids[i]!=0xffffffff; i++){
     pre_rank_vec[pre_rank->rank_ids[i]] = i;
     if(last_rank_vec[pre_rank->rank_ids[i]]==0xffffffff){
       union_rank_ids[union_cnt++] = pre_rank->rank_ids[i];
@@ -973,18 +981,23 @@ double compute_reward(){
   global_rank_info->rank_distance = inversion_cnt*1.00/all_cnt;
   fprintf(ranked_file, "global_rank_info->rank_distance: %f\n", global_rank_info->rank_distance);
   fprintf(ranked_file, "counterexample_rate: %f\n", counterexample_rate);
+  
   fflush(ranked_file);
 
-  double reward = global_rank_info->rank_distance+counterexample_rate;
+  double reward = (global_rank_info->rank_distance+counterexample_rate)/2;
   return reward;
 }
 
+
 int converge(){
   u8 converged = 1;
-  if(!global_rank_info || global_rank_info->inputs_count<10)
+  if(!global_rank_info || global_rank_info->inputs_count<=10 || predicate_score[target_predicate[0]]==predicate_score[target_predicate[49]])
     converged = 0;
   struct rank_info * tmp_rank = global_rank_info;
   while(tmp_rank && (global_rank_info->inputs_count - tmp_rank->inputs_count)<=10){
+    if(tmp_rank->cycle<2)
+      converged = 0;
+    
     if(tmp_rank->rank_distance>0.01)
       converged = 0;
     tmp_rank = tmp_rank->next;
@@ -1018,20 +1031,19 @@ double calc_MutualInformation(double cpi1, double cfi1, double cpi2, double cfi2
 }
 
 static void update_predicates() {
-  u32 i = 0;
-
   N_global = global_crash_count+global_non_crash_count;
   H_y_global = -(global_crash_count/N_global*log2(global_crash_count/N_global)+global_non_crash_count/N_global*log2(global_non_crash_count/N_global));
 
+  u32 i = 0;
   while (i < INST_SIZE) {
-    double max_score = 0, score;
-    u64 max_boundary = 0;
-    enum Predicate max_predicate = NULL_PREDICATE;
-
     if (global_inst_info[i].crash_count == 0 || global_inst_info[i].non_crash_count == 0) {
       i++;
       continue;
     }
+
+    double max_score = 0, score;
+    u64 max_boundary = 0;
+    enum Predicate max_predicate = NULL_PREDICATE;
     
     double t_crash = 0;
     double f_non_crashes = 0;
@@ -1039,7 +1051,8 @@ static void update_predicates() {
 
     struct value_info *temp_min = global_inst_info[i].min_value;
     while (temp_min) {
-      if(!is_stack(temp_min->value) && !is_heap(temp_min->value)) {
+      if(temp_min->crashes_count && !is_stack(temp_min->value) && !is_heap(temp_min->value)) {
+      //if(!is_stack(temp_min->value) && !is_heap(temp_min->value)) {
         all_heap_or_stack = 0;
         break;
       }
@@ -1070,7 +1083,8 @@ static void update_predicates() {
     all_heap_or_stack = 1;
     struct value_info *temp_max = global_inst_info[i].max_value;
     while (temp_max) {
-      if(!is_stack(temp_max->value) && !is_heap(temp_max->value)) {
+      if(temp_max->crashes_count && !is_stack(temp_max->value) && !is_heap(temp_max->value)) {
+      //if(!is_stack(temp_max->value) && !is_heap(temp_max->value)) {
         all_heap_or_stack = 0;
         break;
       }
@@ -1082,7 +1096,7 @@ static void update_predicates() {
     while (temp_max) {
       t_crash += temp_max->crashes_count;
       f_non_crashes += temp_max->non_crashes_count;
-
+      
       score = calc_MutualInformation(global_inst_info[i].crash_count - t_crash, global_inst_info[i].non_crash_count-f_non_crashes, global_crash_count - global_inst_info[i].crash_count + t_crash, global_non_crash_count-global_inst_info[i].non_crash_count+f_non_crashes);
       if (score > max_score && global_inst_info[i].crash_count - t_crash>=global_crash_count - global_inst_info[i].crash_count + t_crash) {
         max_score = score;
@@ -1258,7 +1272,7 @@ static void update_predicates() {
 
   //bb info
   i = 1;
-  while (i < MAP_SIZE) {
+  while (i < BB_SIZE) {
 
     if (global_bb_info[i].crash_count == 0) {
       i++;
@@ -1268,51 +1282,35 @@ static void update_predicates() {
     double max_score = 0, score;
     u64 max_boundary = 0;
     enum Predicate max_predicate = NULL_PREDICATE;
-
-    ///*
+    /*
     score = calc_MutualInformation(global_bb_info[i].crash_count, global_bb_info[i].non_crash_count, global_crash_count - global_bb_info[i].crash_count, global_non_crash_count-global_bb_info[i].non_crash_count);
     if (score > max_score && global_bb_info[i].crash_count>=global_crash_count - global_bb_info[i].crash_count) {
       max_score = score;
       max_boundary = 1;
       max_predicate = IS_VISITED;
-    }
-    //*/
+    }//*/
 
-    struct value_info *temp_successors = global_bb_info[i].num_successors;
-    struct value_info *temp_edge_to = global_bb_info[i].has_edge_to;
-    struct value_info *temp_always_taken_to = global_bb_info[i].always_taken_to;
+    //if (global_bb_info[i].non_crash_count) {
 
-    
-    double t_crash = 0;
-    double f_non_crashes = 0;
-
-    while (temp_edge_to) {
-      t_crash = temp_edge_to->crashes_count;
-      f_non_crashes = temp_edge_to->non_crashes_count;
+      struct value_info *temp_successors = global_bb_info[i].num_successors;
+      struct value_info *temp_edge_to = global_bb_info[i].has_edge_to;
       
-      score = calc_MutualInformation(t_crash, f_non_crashes, global_crash_count - t_crash, global_non_crash_count-f_non_crashes);
-      if (score > max_score && t_crash>=global_crash_count - t_crash) {
-        max_score = score;
-        max_boundary = temp_edge_to->value;
-        max_predicate = HAS_EDGE_TO;
+      double t_crash = 0;
+      double f_non_crashes = 0;
+
+      while (temp_edge_to) {
+        t_crash = temp_edge_to->crashes_count;
+        f_non_crashes = temp_edge_to->non_crashes_count;
+        
+        score = calc_MutualInformation(t_crash, f_non_crashes, global_crash_count - t_crash, global_non_crash_count-f_non_crashes);
+        if (score > max_score && t_crash>=global_crash_count - t_crash) {
+          max_score = score;
+          max_boundary = temp_edge_to->value;
+          max_predicate = HAS_EDGE_TO;
+        }
+        temp_edge_to = temp_edge_to->next;
       }
-      temp_edge_to = temp_edge_to->next;
-    }
 
-    while (temp_always_taken_to) {
-      t_crash = temp_always_taken_to->crashes_count;
-      f_non_crashes = temp_always_taken_to->non_crashes_count;
-
-      score = calc_MutualInformation(t_crash, f_non_crashes, global_crash_count - t_crash, global_non_crash_count-f_non_crashes);
-      if (score > max_score && t_crash>=global_crash_count - t_crash) {
-        max_score = score;
-        max_boundary = temp_always_taken_to->value;
-        max_predicate = EDGE_ONLY_TAKEN_TO;
-      }
-      temp_always_taken_to = temp_always_taken_to->next;
-    }
-
-    if (global_bb_info[i].non_crash_count) {
       u32 boundary0=0; 
       u32 boundary1=1;
       u32 boundary2=2;
@@ -1363,34 +1361,7 @@ static void update_predicates() {
         max_boundary = boundary2;
         max_predicate = NUM_SUCCESSORS_GT;
       }
-      
-      t_crash  = global_bb_info[i].crash_count - t_crash0;
-      f_non_crashes  = global_bb_info[i].non_crash_count-f_non_crashes0;
-      score = calc_MutualInformation(t_crash, f_non_crashes, global_crash_count - t_crash, global_non_crash_count-f_non_crashes);
-      if (score > max_score && t_crash>=global_crash_count - t_crash) {
-        max_score = score;
-        max_boundary = boundary0;
-        max_predicate = NUM_SUCCESSORS_EQ;
-      }
-
-      t_crash  = t_crash0 - t_crash1;
-      f_non_crashes  = f_non_crashes0-f_non_crashes1;
-      score = calc_MutualInformation(t_crash, f_non_crashes, global_crash_count - t_crash, global_non_crash_count-f_non_crashes);
-      if (score > max_score && t_crash>=global_crash_count - t_crash) {
-        max_score = score;
-        max_boundary = boundary1;
-        max_predicate = NUM_SUCCESSORS_EQ;
-      }
-
-      t_crash  = t_crash1 - t_crash2;
-      f_non_crashes  = f_non_crashes1-f_non_crashes2;
-      score = calc_MutualInformation(t_crash, f_non_crashes, global_crash_count - t_crash, global_non_crash_count-f_non_crashes);
-      if (score > max_score && t_crash>=global_crash_count - t_crash) {
-        max_score = score;
-        max_boundary = boundary2;
-        max_predicate = NUM_SUCCESSORS_EQ;
-      }
-    }
+    //}
     
     predicate_score[INST_SIZE+i] = max_score;
     predicate_boundary[INST_SIZE+i] = max_boundary;
@@ -1426,14 +1397,10 @@ const char* predicateToString(enum Predicate pred) {
             return "overflow_flag_set";
         case HAS_EDGE_TO:
             return "has_edge_to";
-        case EDGE_ONLY_TAKEN_TO:
-            return "edge_only_taken_to";
         case NUM_SUCCESSORS_GT:
             return "num_successors_gt";
-        case NUM_SUCCESSORS_EQ:
-            return "num_successors_eq";
-        case IS_VISITED:
-            return "is_visited";
+        //case IS_VISITED:
+        //    return "is_visited";
         case NULL_PREDICATE:
             return "null_predicate";
         default:
@@ -1442,26 +1409,24 @@ const char* predicateToString(enum Predicate pred) {
 }
 
 static void rank(){
+  memset(target_predicate, 0xff, sizeof(u32) * TOP_K);
   u32 i = 0;
-  memset(target_predicate, 0xff, sizeof(u32) * (INST_SIZE+MAP_SIZE));
-
-  while (i < INST_SIZE+MAP_SIZE) {
-    if(predicate_seq[i]){
-      if (predicate_score[i] > 0) {
-        for (u32 j = 0; j < INST_SIZE+MAP_SIZE; j++) {
+  while (i < INST_SIZE+BB_SIZE) {
+    if (predicate_score[i] > 0) {
+      if (target_predicate[TOP_K-1] == 0xffffffff || predicate_score[i]>=predicate_score[target_predicate[TOP_K-1]]){
+        for (u32 j = 0; j < TOP_K; j++) {
           if (target_predicate[j] == 0xffffffff) {
             target_predicate[j] = i;
             break;
           }
-          
 
           if (predicate_score[i] > predicate_score[target_predicate[j]]) {
-            memcpy(target_predicate + j + 1, target_predicate + j, (INST_SIZE+MAP_SIZE - j - 1)*sizeof(u32));
+            memcpy(target_predicate + j + 1, target_predicate + j, (TOP_K - j - 1)*sizeof(u32));
             target_predicate[j] = i;
             break;
           } else if (predicate_score[i] == predicate_score[target_predicate[j]]) {
             if (predicate_seq[i] < predicate_seq[target_predicate[j]]) {
-              memcpy(target_predicate + j + 1, target_predicate + j, (INST_SIZE+MAP_SIZE - j - 1)*sizeof(u32));
+              memcpy(target_predicate + j + 1, target_predicate + j, (TOP_K - j - 1)*sizeof(u32));
               target_predicate[j] = i;
               break;
             }
@@ -1471,15 +1436,14 @@ static void rank(){
     }
     i++;
   }
-
-  target_predicate[top_k] = 0xffffffff;
     
   if (target_predicate[0]!=0xffffffff) {
     struct rank_info *temp_rank = (struct rank_info *)malloc(sizeof(struct rank_info));
     temp_rank->update_time = (get_cur_time() - start_time) / 1000;
     temp_rank->inputs_count = global_non_crash_count + global_crash_count;
-    temp_rank->rank_ids = (u32 *)malloc(sizeof(u32)*top_k);
-    memset(temp_rank->rank_ids, 0, sizeof(u32)*top_k);
+    temp_rank->cycle = queue_cycle;
+    temp_rank->rank_ids = (u32 *)malloc(sizeof(u32)*TOP_K);
+    memset(temp_rank->rank_ids, 0, sizeof(u32)*TOP_K);
     temp_rank->rank_distance=1;
     
     fprintf(ranked_file, "inputs: %s\n", queue_top->fname);
@@ -1487,17 +1451,15 @@ static void rank(){
     fprintf(ranked_file, "new_counterexample_for_predicate_cnt: %d\n", new_counterexample_for_predicate_cnt);
     fprintf(ranked_file, "rank update at: %llu\n", temp_rank->update_time);
       
-    for (u32 j = 0; j<top_k && target_predicate[j]!=0xffffffff; j++) {
+    for (u32 j = 0; j<TOP_K && target_predicate[j]!=0xffffffff; j++) {
       u32 id = target_predicate[j];
       temp_rank->rank_ids[j] = id;
       if(predicate_type[id]==MIN_VAL_LEQ || predicate_type[id]==MAX_VAL_GT)
         fprintf(ranked_file, "[top-%d] inst_id: %d, score: %lf, predicate: %s 0x%lx, inst: %s at %s\n", j+1, id, predicate_score[id], predicateToString(predicate_type[id]), predicate_boundary[id], global_inst_source_info[id].instructionInfo, global_inst_source_info[id].sourceCodeInfo);
-      else if(predicate_type[id]==HAS_EDGE_TO || predicate_type[id]==EDGE_ONLY_TAKEN_TO)
+      else if(predicate_type[id]==HAS_EDGE_TO)
         fprintf(ranked_file, "[top-%d] bb_id: %d, score: %lf, predicate: %s %lu, edge from %s to %s\n", j+1, id-INST_SIZE, predicate_score[id], predicateToString(predicate_type[id]), predicate_boundary[id], global_bb_source_info[id-INST_SIZE].BBendSourceCodeInfo, global_bb_source_info[predicate_boundary[id]].BBstartSourceCodeInfo);
-      else if(predicate_type[id]==NUM_SUCCESSORS_GT || predicate_type[id]==NUM_SUCCESSORS_EQ)
+      else if(predicate_type[id]==NUM_SUCCESSORS_GT)
         fprintf(ranked_file, "[top-%d] bb_id: %d, score: %lf, predicate: %s %lu, bb at %s\n", j+1, id-INST_SIZE, predicate_score[id], predicateToString(predicate_type[id]), predicate_boundary[id], global_bb_source_info[id-INST_SIZE].BBendSourceCodeInfo);
-      else if(predicate_type[id]==IS_VISITED)
-        fprintf(ranked_file, "[top-%d] bb_id: %d, score: %lf, predicate: %s, bb at %s\n", j+1, id-INST_SIZE, predicate_score[id], predicateToString(predicate_type[id]), global_bb_source_info[id-INST_SIZE].BBstartSourceCodeInfo);
       else
         fprintf(ranked_file, "[top-%d] inst_id: %d, score: %lf, predicate: %s, inst: %s at %s\n", j+1, id, predicate_score[id], predicateToString(predicate_type[id]), global_inst_source_info[id].instructionInfo, global_inst_source_info[id].sourceCodeInfo);
     }
@@ -1505,6 +1467,7 @@ static void rank(){
     fprintf(ranked_file, "op_selected_gamma: %f\n", op_selected_gamma);
     fprintf(ranked_file, "loc_selection_gamma: %f\n", loc_selection_gamma);
     fprintf(ranked_file, "predicate_selection_gamma: %f\n", predicate_selection_gamma);
+    //fprintf(ranked_file, "stack_start is %lx, stack_end is %lx, heap_start is %lx, heap_end is %lx,", stack_start, stack_end, heap_start, heap_end);
     fflush(ranked_file);
 
     temp_rank->next = global_rank_info;
@@ -2009,6 +1972,129 @@ EXP_ST void write_bitmap(void) {
   close(fd);
   ck_free(fname);
 
+  fname = alloc_printf("%s/value.json", out_dir);
+  FILE *fp = fopen(fname, "w");
+  u32 inst_count = INST_SIZE;
+
+  u32 i = 0;
+  struct value_info *temp_v;
+
+  while (i < inst_count) {
+    fprintf(fp, "------------------------\n");
+    fprintf(fp, "%u:%u,%u\n", i, global_inst_info[i].crash_count,
+            global_inst_info[i].non_crash_count);
+    fprintf(fp, "min\n");
+    temp_v = global_inst_info[i].min_value;
+    while (temp_v) {
+      fprintf(fp, "%lx:%u,%u\n", temp_v->value, temp_v->crashes_count,
+              temp_v->non_crashes_count);
+      temp_v = temp_v->next;
+    }
+    fprintf(fp, "max\n");
+    temp_v = global_inst_info[i].max_value;
+    while (temp_v) {
+      fprintf(fp, "%lx:%u,%u\n", temp_v->value, temp_v->crashes_count,
+              temp_v->non_crashes_count);
+      temp_v = temp_v->next;
+    }
+    fprintf(fp, "carry_flag\n");
+    temp_v = global_inst_info[i].carry_flag;
+    while (temp_v) {
+      fprintf(fp, "%lx:%u,%u\n", temp_v->value, temp_v->crashes_count,
+              temp_v->non_crashes_count);
+      temp_v = temp_v->next;
+    }
+    fprintf(fp, "parity_flag\n");
+    temp_v = global_inst_info[i].parity_flag;
+    while (temp_v) {
+      fprintf(fp, "%lx:%u,%u\n", temp_v->value, temp_v->crashes_count,
+              temp_v->non_crashes_count);
+      temp_v = temp_v->next;
+    }
+    fprintf(fp, "adjust_flag\n");
+    temp_v = global_inst_info[i].adjust_flag;
+    while (temp_v) {
+      fprintf(fp, "%lx:%u,%u\n", temp_v->value, temp_v->crashes_count,
+              temp_v->non_crashes_count);
+      temp_v = temp_v->next;
+    }
+    fprintf(fp, "zero_flag\n");
+    temp_v = global_inst_info[i].zero_flag;
+    while (temp_v) {
+      fprintf(fp, "%lx:%u,%u\n", temp_v->value, temp_v->crashes_count,
+              temp_v->non_crashes_count);
+      temp_v = temp_v->next;
+    }
+    fprintf(fp, "sign_flag\n");
+    temp_v = global_inst_info[i].sign_flag;
+    while (temp_v) {
+      fprintf(fp, "%lx:%u,%u\n", temp_v->value, temp_v->crashes_count,
+              temp_v->non_crashes_count);
+      temp_v = temp_v->next;
+    }
+    fprintf(fp, "trap_flag\n");
+    temp_v = global_inst_info[i].trap_flag;
+    while (temp_v) {
+      fprintf(fp, "%lx:%u,%u\n", temp_v->value, temp_v->crashes_count,
+              temp_v->non_crashes_count);
+      temp_v = temp_v->next;
+    }
+    fprintf(fp, "interrupt_flag\n");
+    temp_v = global_inst_info[i].interrupt_flag;
+    while (temp_v) {
+      fprintf(fp, "%lx:%u,%u\n", temp_v->value, temp_v->crashes_count,
+              temp_v->non_crashes_count);
+      temp_v = temp_v->next;
+    }
+    fprintf(fp, "direction_flag\n");
+    temp_v = global_inst_info[i].direction_flag;
+    while (temp_v) {
+      fprintf(fp, "%lx:%u,%u\n", temp_v->value, temp_v->crashes_count,
+              temp_v->non_crashes_count);
+      temp_v = temp_v->next;
+    }
+    fprintf(fp, "overflow_flag\n");
+    temp_v = global_inst_info[i].overflow_flag;
+    while (temp_v) {
+      fprintf(fp, "%lx:%u,%u\n", temp_v->value, temp_v->crashes_count,
+              temp_v->non_crashes_count);
+      temp_v = temp_v->next;
+    }
+    i++;
+  }
+
+  i = 0;
+
+  while (i < BB_SIZE) {
+    //if(global_bb_info[i].crash_count==0){
+    //  i++;
+    //  continue;
+    //}
+    fprintf(fp, "------------------------\n");
+    fprintf(fp, "bb[%u]:%u,%u\n", i, global_bb_info[i].crash_count,
+            global_bb_info[i].non_crash_count);
+    fprintf(fp, "num_successors\n");
+    temp_v = global_bb_info[i].num_successors;
+    while (temp_v) {
+      fprintf(fp, "%lx:%u,%u\n", temp_v->value, temp_v->crashes_count,
+              temp_v->non_crashes_count);
+      temp_v = temp_v->next;
+    }
+    fprintf(fp, "has_edge_to\n");
+    temp_v = global_bb_info[i].has_edge_to;
+    while (temp_v) {
+      fprintf(fp, "%lx:%u,%u\n", temp_v->value, temp_v->crashes_count,
+              temp_v->non_crashes_count);
+      temp_v = temp_v->next;
+    }
+    i++;
+  }
+
+
+  fclose(fp);
+  ck_free(fname);
+  
+
 }
 
 
@@ -2110,7 +2196,7 @@ int is_target_inst(u32 id){
   if (target_predicate[0] == 0xffffffff)
     return 1;
 
-  for (u32 k = 0; k < INST_SIZE+MAP_SIZE; k++) {
+  for (u32 k = 0; k < TOP_K; k++) {
     if (target_predicate[k] == 0xffffffff)
       break;
     if (target_predicate[k] == id)
@@ -2125,72 +2211,85 @@ static inline u8 has_new_crashes_values() {
   u8 *crashes_virgin;
   new_counterexample_for_predicate_cnt = 0;
   for(i=0; i<INST_SIZE; i++){
-    if(!is_target_inst(i))
-      continue;
-    
     if (trace_bits->is_visited[i]== 0){
-      new_counterexample_for_predicate_cnt++;
-      fprintf(ranked_file, "inst_id: %d, is_visited = 0\n", i);
-      fflush(ranked_file);
+      if(global_inst_info[i].crash_count==global_crash_count){
+        if(is_target_inst(i))
+          new_counterexample_for_predicate_cnt++;
+        //fprintf(ranked_file, "inst_id: %d, is_visited = 0\n", i);
+        //fflush(ranked_file);
+      }
       continue;
     }
 
+    if(!is_target_inst(i))
+      continue;
+
     if (predicate_type[i]==MIN_VAL_LEQ){
       u64 min_v  = trace_bits->min_value[i];
-      u32 min_cksum = hash32(&min_v, 8, HASH_CONST);
-      min_cksum = min_cksum & 0xff;
-      crashes_virgin = virgin_bits_crashes + 96 * i + min_cksum / 8;
-      if (unlikely(!((*crashes_virgin) & (1 << (min_cksum % 8))))) {
-        if(min_v>predicate_boundary[i]){
+      //if(i==global_last_id || (!is_stack(min_v) && !is_heap(min_v))) {
+      if(min_v>predicate_boundary[i]){
+        u32 min_cksum = hash32(&min_v, 8, HASH_CONST);
+        min_cksum = min_cksum & 0xff;
+        crashes_virgin = virgin_bits_crashes + 96 * i + min_cksum / 8;
+        if (unlikely(!((*crashes_virgin) & (1 << (min_cksum % 8))))) {
           new_counterexample_for_predicate_cnt++;
-          fprintf(ranked_file, "inst_id: %d, min_v = 0x%lx\n", i, min_v);
-          fflush(ranked_file);
+          //fprintf(ranked_file, "inst_id: %d, min_v = 0x%lx\n", i, min_v);
+          //fflush(ranked_file);
         }
       }
+      //}
+      continue;
     }
 
     if (predicate_type[i]==MAX_VAL_GT) {
       u64 max_v  = trace_bits->max_value[i];
-      u32 max_cksum = hash32(&max_v, 8, HASH_CONST);
-      max_cksum = max_cksum & 0xff;
-      crashes_virgin = virgin_bits_crashes + 96 * i + 32 + max_cksum / 8;
-      if (unlikely(!((*crashes_virgin) & (1 << (max_cksum % 8))))) {
-        if(max_v<=predicate_boundary[i]){
+      //if(i==global_last_id || (!is_stack(max_v) && !is_heap(max_v))) {
+      if(max_v<=predicate_boundary[i]){
+        u32 max_cksum = hash32(&max_v, 8, HASH_CONST);
+        max_cksum = max_cksum & 0xff;
+        crashes_virgin = virgin_bits_crashes + 96 * i + 32 + max_cksum / 8;
+        if (unlikely(!((*crashes_virgin) & (1 << (max_cksum % 8))))) {
           new_counterexample_for_predicate_cnt++;
-          fprintf(ranked_file, "inst_id: %d, max_v = 0x%lx\n", i, max_v);
-          fflush(ranked_file);
+          //fprintf(ranked_file, "inst_id: %d, max_v = 0x%lx\n", i, max_v);
+          //fflush(ranked_file);
         }
       }
+      //}
+      continue;
     }
 
     if (predicate_type[i]==CARRY_FLAG_SET || predicate_type[i]==PARITY_FLAG_SET || predicate_type[i]==ADJUST_FLAG_SET || predicate_type[i]==ZERO_FLAG_SET || predicate_type[i]==SIGN_FLAG_SET || predicate_type[i]==TRAP_FLAG_SET || predicate_type[i]==INTERRUPT_FLAG_SET || predicate_type[i]==DIRECTION_FLAG_SET || predicate_type[i]==OVERFLOW_FLAG_SET){
       u64 eflags = trace_bits->eflag[i];
-      u32 eflags_cksum = hash32(&eflags, 8, HASH_CONST);
-      eflags_cksum = eflags_cksum & 0xff;
-      crashes_virgin = virgin_bits_crashes + 96 * i + 64 + eflags_cksum / 8;
-      if (unlikely(!((*crashes_virgin) & (1 << (eflags_cksum % 8))))) {
-        if((predicate_type[i]==CARRY_FLAG_SET && !value_of_reg_bit(eflags,0)) || (predicate_type[i]==PARITY_FLAG_SET && !value_of_reg_bit(eflags,2)) || (predicate_type[i]==ADJUST_FLAG_SET && !value_of_reg_bit(eflags,4)) || (predicate_type[i]==ZERO_FLAG_SET && !value_of_reg_bit(eflags,6)) || (predicate_type[i]==SIGN_FLAG_SET && !value_of_reg_bit(eflags,7)) || (predicate_type[i]==TRAP_FLAG_SET && !value_of_reg_bit(eflags,8))|| (predicate_type[i]==INTERRUPT_FLAG_SET && !value_of_reg_bit(eflags,9))|| (predicate_type[i]==DIRECTION_FLAG_SET && !value_of_reg_bit(eflags,10)) || (predicate_type[i]==OVERFLOW_FLAG_SET && !value_of_reg_bit(eflags,11))){
+      if((predicate_type[i]==CARRY_FLAG_SET && !value_of_reg_bit(eflags,0)) || (predicate_type[i]==PARITY_FLAG_SET && !value_of_reg_bit(eflags,2)) || (predicate_type[i]==ADJUST_FLAG_SET && !value_of_reg_bit(eflags,4)) || (predicate_type[i]==ZERO_FLAG_SET && !value_of_reg_bit(eflags,6)) || (predicate_type[i]==SIGN_FLAG_SET && !value_of_reg_bit(eflags,7)) || (predicate_type[i]==TRAP_FLAG_SET && !value_of_reg_bit(eflags,8))|| (predicate_type[i]==INTERRUPT_FLAG_SET && !value_of_reg_bit(eflags,9))|| (predicate_type[i]==DIRECTION_FLAG_SET && !value_of_reg_bit(eflags,10)) || (predicate_type[i]==OVERFLOW_FLAG_SET && !value_of_reg_bit(eflags,11))){  
+        u32 eflags_cksum = hash32(&eflags, 8, HASH_CONST);
+        eflags_cksum = eflags_cksum & 0xff;
+        crashes_virgin = virgin_bits_crashes + 96 * i + 64 + eflags_cksum / 8;
+        if (unlikely(!((*crashes_virgin) & (1 << (eflags_cksum % 8))))) {
           new_counterexample_for_predicate_cnt++;
-          fprintf(ranked_file, "inst_id: %d, eflags = 0x%lx\n", i, eflags);
-          fflush(ranked_file);
+          //fprintf(ranked_file, "inst_id: %d, eflags = 0x%lx\n", i, eflags);
+          //fflush(ranked_file);
         }
       }
+      continue;
     }
   }
 
-  i = MAP_SIZE;
+  i = BB_SIZE;
   while(i--){
-    if(!is_target_inst(INST_SIZE+i))
-      continue;
-    
     if (trace_bits->is_visited[INST_SIZE+i]== 0){
-      new_counterexample_for_predicate_cnt++;
-      fprintf(ranked_file, "bb_id: %d, is_visited = 0\n", i);
-      fflush(ranked_file);
+      if(global_bb_info[i].crash_count==global_crash_count){
+        if(is_target_inst(INST_SIZE+i))
+          new_counterexample_for_predicate_cnt++;
+        //fprintf(ranked_file, "bb_id: %d, is_visited = 0\n", i);
+        //fflush(ranked_file);
+      }
       continue;
     }
 
-    if (predicate_type[INST_SIZE+i]==HAS_EDGE_TO || predicate_type[INST_SIZE+i]==EDGE_ONLY_TAKEN_TO || predicate_type[INST_SIZE+i]==NUM_SUCCESSORS_GT || predicate_type[INST_SIZE+i]==NUM_SUCCESSORS_EQ) {
+    if(!is_target_inst(INST_SIZE+i))
+      continue;
+
+    if (predicate_type[INST_SIZE+i]==HAS_EDGE_TO || predicate_type[INST_SIZE+i]==NUM_SUCCESSORS_GT) {
       u32 start_index = trace_bits->bb_start_index[i];
       u16 cnt_succ = trace_bits->bb_succ_cnt[i];
         
@@ -2208,32 +2307,15 @@ static inline u8 has_new_crashes_values() {
         exec_cnt_succ++;
       }
 
-      u32 edges_cksum = hash32(&bb_id_sum, 8, HASH_CONST);
-      edges_cksum = edges_cksum & 0xff; 
-      crashes_virgin = virgin_bits_crashes + 96 * INST_SIZE + 32 * i + edges_cksum / 8;
-      if (unlikely(!((*crashes_virgin) & (1 << (edges_cksum % 8))))) {
-        if(predicate_type[INST_SIZE+i]==HAS_EDGE_TO && found==0){
+      if((predicate_type[INST_SIZE+i]==HAS_EDGE_TO && found==0) || (predicate_type[INST_SIZE+i]==NUM_SUCCESSORS_GT && exec_cnt_succ<=predicate_boundary[INST_SIZE+i])){
+        u32 edges_cksum = hash32(&bb_id_sum, 8, HASH_CONST);
+        edges_cksum = edges_cksum & 0xff; 
+        crashes_virgin = virgin_bits_crashes + 96 * INST_SIZE + 32 * i + edges_cksum / 8;
+        if (unlikely(!((*crashes_virgin) & (1 << (edges_cksum % 8))))) {
           new_counterexample_for_predicate_cnt++;
-          fprintf(ranked_file, "bb_id: %d, !has_edge_to\n", i);
-          fflush(ranked_file);
-        }
-
-        if(predicate_type[INST_SIZE+i]==EDGE_ONLY_TAKEN_TO && (found==0 || exec_cnt_succ>1)){
-          new_counterexample_for_predicate_cnt++;
-          fprintf(ranked_file, "bb_id: %d, !always_taken_to\n", i);
-          fflush(ranked_file);
-        }
-
-        if(predicate_type[INST_SIZE+i]==NUM_SUCCESSORS_GT && exec_cnt_succ<=predicate_boundary[INST_SIZE+i]){
-          new_counterexample_for_predicate_cnt++;
-          fprintf(ranked_file, "bb_id: %d, NUM_SUCCESSORS is %d\n", exec_cnt_succ);
-          fflush(ranked_file);
-        }
-
-        if(predicate_type[INST_SIZE+i]==NUM_SUCCESSORS_EQ && exec_cnt_succ!=predicate_boundary[INST_SIZE+i]){
-          new_counterexample_for_predicate_cnt++;
-          fprintf(ranked_file, "bb_id: %d, NUM_SUCCESSORS is %d\n", exec_cnt_succ);
-          fflush(ranked_file);
+          //fprintf(ranked_file, "bb_id: %d, !has_edge_to or NUM_SUCCESSORS is %d\n", i, exec_cnt_succ);
+          //fflush(ranked_file);
+          continue;
         }
       }
     }
@@ -2263,7 +2345,7 @@ static inline u8 has_new_crashes_values() {
       *crashes_virgin |= 1 << (eflags_cksum % 8);
     }
 
-    i = MAP_SIZE;
+    i = BB_SIZE;
     while (i--) {
       if (trace_bits->is_visited[INST_SIZE+i] == 0)
         continue;
@@ -2301,70 +2383,88 @@ static inline u8 has_new_non_crashes_values() {
   new_counterexample_for_predicate_cnt = 0;
 
   for(i=0; i< INST_SIZE; i++){
-    if(!is_target_inst(i))
-      continue;
-    
     if (trace_bits->is_visited[i] == 0)
+      continue;
+
+    if(!is_target_inst(i))
       continue;
     
     if (predicate_type[i]==MIN_VAL_LEQ){
       u64 min_v  = trace_bits->min_value[i];
-      u32 min_cksum = hash32(&min_v, 8, HASH_CONST);
-      min_cksum = min_cksum & 0xff;
-      non_crashes_virgin = virgin_bits_non_crashes + 96 * i + min_cksum / 8;
-      if (unlikely(!((*non_crashes_virgin) & (1 << (min_cksum % 8))))) {
-        if(min_v<=predicate_boundary[i]){
+      //if(i==global_last_id || (!is_stack(min_v) && !is_heap(min_v))) {
+      if(min_v<=predicate_boundary[i]){
+        u32 min_cksum = hash32(&min_v, 8, HASH_CONST);
+        min_cksum = min_cksum & 0xff;
+        non_crashes_virgin = virgin_bits_non_crashes + 96 * i + min_cksum / 8;
+        if (unlikely(!((*non_crashes_virgin) & (1 << (min_cksum % 8))))) {
           new_counterexample_for_predicate_cnt++;
-          fprintf(ranked_file, "inst_id: %d, min_v = 0x%lx\n", i, min_v);
-          fflush(ranked_file);
+          //fprintf(ranked_file, "inst_id: %d, min_v = 0x%lx\n", i, min_v);
+          //fflush(ranked_file);
         }
-      }    
+      } 
+      //}   
+      continue;
     }
 
     if (predicate_type[i]==MAX_VAL_GT) {
       u64 max_v  = trace_bits->max_value[i];
-      u32 max_cksum = hash32(&max_v, 8, HASH_CONST);
-      max_cksum = max_cksum & 0xff;
-      non_crashes_virgin = virgin_bits_non_crashes + 96 * i + 32 + max_cksum / 8;
-      if (unlikely(!((*non_crashes_virgin) & (1 << (max_cksum % 8))))) {
-        if(max_v>predicate_boundary[i]){
+      //if(i==global_last_id || (!is_stack(max_v) && !is_heap(max_v))) {
+      if(max_v>predicate_boundary[i]){
+        u32 max_cksum = hash32(&max_v, 8, HASH_CONST);
+        max_cksum = max_cksum & 0xff;
+        non_crashes_virgin = virgin_bits_non_crashes + 96 * i + 32 + max_cksum / 8;
+        if (unlikely(!((*non_crashes_virgin) & (1 << (max_cksum % 8))))) {
           new_counterexample_for_predicate_cnt++;
-          fprintf(ranked_file, "inst_id: %d, max_v = 0x%lx\n", i, max_v);
-          fflush(ranked_file);
+          //fprintf(ranked_file, "inst_id: %d, max_v = 0x%lx\n", i, max_v);
+          //fflush(ranked_file);
         }
       }
+      //}
+      continue;
     }
 
     if (predicate_type[i]==CARRY_FLAG_SET || predicate_type[i]==PARITY_FLAG_SET || predicate_type[i]==ADJUST_FLAG_SET || predicate_type[i]==ZERO_FLAG_SET || predicate_type[i]==SIGN_FLAG_SET || predicate_type[i]==TRAP_FLAG_SET || predicate_type[i]==INTERRUPT_FLAG_SET || predicate_type[i]==DIRECTION_FLAG_SET || predicate_type[i]==OVERFLOW_FLAG_SET){
       u64 eflags = trace_bits->eflag[i];
-      u32 eflags_cksum = hash32(&eflags, 8, HASH_CONST);
-      eflags_cksum = eflags_cksum & 0xff;
-      non_crashes_virgin = virgin_bits_non_crashes + 96 * i + 64 + eflags_cksum / 8;
-      if (unlikely(!((*non_crashes_virgin) & (1 << (eflags_cksum % 8))))) {
-        if((predicate_type[i]==CARRY_FLAG_SET && value_of_reg_bit(eflags,0)) || (predicate_type[i]==PARITY_FLAG_SET && value_of_reg_bit(eflags,2)) || (predicate_type[i]==ADJUST_FLAG_SET && value_of_reg_bit(eflags,4)) || (predicate_type[i]==ZERO_FLAG_SET && value_of_reg_bit(eflags,6)) || (predicate_type[i]==SIGN_FLAG_SET && value_of_reg_bit(eflags,7)) || (predicate_type[i]==TRAP_FLAG_SET && value_of_reg_bit(eflags,8))|| (predicate_type[i]==INTERRUPT_FLAG_SET && value_of_reg_bit(eflags,9))|| (predicate_type[i]==DIRECTION_FLAG_SET && value_of_reg_bit(eflags,10)) || (predicate_type[i]==OVERFLOW_FLAG_SET && value_of_reg_bit(eflags,11))){
+      if((predicate_type[i]==CARRY_FLAG_SET && value_of_reg_bit(eflags,0)) || (predicate_type[i]==PARITY_FLAG_SET && value_of_reg_bit(eflags,2)) || (predicate_type[i]==ADJUST_FLAG_SET && value_of_reg_bit(eflags,4)) || (predicate_type[i]==ZERO_FLAG_SET && value_of_reg_bit(eflags,6)) || (predicate_type[i]==SIGN_FLAG_SET && value_of_reg_bit(eflags,7)) || (predicate_type[i]==TRAP_FLAG_SET && value_of_reg_bit(eflags,8))|| (predicate_type[i]==INTERRUPT_FLAG_SET && value_of_reg_bit(eflags,9))|| (predicate_type[i]==DIRECTION_FLAG_SET && value_of_reg_bit(eflags,10)) || (predicate_type[i]==OVERFLOW_FLAG_SET && value_of_reg_bit(eflags,11))){
+        u32 eflags_cksum = hash32(&eflags, 8, HASH_CONST);
+        eflags_cksum = eflags_cksum & 0xff;
+        non_crashes_virgin = virgin_bits_non_crashes + 96 * i + 64 + eflags_cksum / 8;
+        if (unlikely(!((*non_crashes_virgin) & (1 << (eflags_cksum % 8))))) {
           new_counterexample_for_predicate_cnt++;
-          fprintf(ranked_file, "inst_id: %d, eflags = 0x%lx\n", i, eflags);
-          fflush(ranked_file);
+          //fprintf(ranked_file, "inst_id: %d, eflags = 0x%lx\n", i, eflags);
+          //fflush(ranked_file);
         }
       }
+      continue;
     }
   }
 
-  i=MAP_SIZE;
+  i=BB_SIZE;
   while(i--){
-    if(!is_target_inst(INST_SIZE+i))
-      continue;
-    
     if (trace_bits->is_visited[INST_SIZE+i] == 0)
       continue;
 
-    if(predicate_type[INST_SIZE+i]==IS_VISITED){
+    if(!is_target_inst(INST_SIZE+i))
+      continue;
+    
+    if(global_non_crash_count==0){
       new_counterexample_for_predicate_cnt++;
-      fprintf(ranked_file, "bb_id: %d, is_visited\n");
-      fflush(ranked_file);
+      //fprintf(ranked_file, "bb_id: %d, is_visited\n", i);
+      //fflush(ranked_file);
+      continue;
     }
     
-    if (predicate_type[INST_SIZE+i]==HAS_EDGE_TO || predicate_type[INST_SIZE+i]==EDGE_ONLY_TAKEN_TO || predicate_type[INST_SIZE+i]==NUM_SUCCESSORS_GT || predicate_type[INST_SIZE+i]==NUM_SUCCESSORS_EQ) {
+    /*
+    if (predicate_type[INST_SIZE+i]==IS_VISITED){
+      if(global_bb_info[i].non_crash_count==0){
+        new_counterexample_for_predicate_cnt++;
+        fprintf(ranked_file, "bb_id: %d, is_visited\n", i);
+        fflush(ranked_file);
+      }
+      continue;
+    }*/
+    
+    if (predicate_type[INST_SIZE+i]==HAS_EDGE_TO || predicate_type[INST_SIZE+i]==NUM_SUCCESSORS_GT) {
       u32 start_index = trace_bits->bb_start_index[i];
       u16 cnt_succ = trace_bits->bb_succ_cnt[i];
       
@@ -2381,32 +2481,15 @@ static inline u8 has_new_non_crashes_values() {
         exec_cnt_succ++;
       }
 
-      u32 edges_cksum = hash32(&bb_id_sum, 8, HASH_CONST);
-      edges_cksum = edges_cksum & 0xff; 
-      non_crashes_virgin = virgin_bits_non_crashes + 96 * INST_SIZE + 32 * i + edges_cksum / 8;
-      if (unlikely(!((*non_crashes_virgin) & (1 << (edges_cksum % 8))))) {
-        if(predicate_type[INST_SIZE+i]==HAS_EDGE_TO && found==1){
+      if((predicate_type[INST_SIZE+i]==HAS_EDGE_TO && found==1) || (predicate_type[INST_SIZE+i]==NUM_SUCCESSORS_GT && exec_cnt_succ>predicate_boundary[INST_SIZE+i])){
+        u32 edges_cksum = hash32(&bb_id_sum, 8, HASH_CONST);
+        edges_cksum = edges_cksum & 0xff; 
+        non_crashes_virgin = virgin_bits_non_crashes + 96 * INST_SIZE + 32 * i + edges_cksum / 8;
+        if (unlikely(!((*non_crashes_virgin) & (1 << (edges_cksum % 8))))) {
           new_counterexample_for_predicate_cnt++;
-          fprintf(ranked_file, "bb_id: %d, has_edge_to\n", i);
-          fflush(ranked_file);
-        }
-        
-        if(predicate_type[INST_SIZE+i]==EDGE_ONLY_TAKEN_TO && found==1 && exec_cnt_succ==1){
-          new_counterexample_for_predicate_cnt++;
-          fprintf(ranked_file, "bb_id: %d, always_taken_to\n", i);
-          fflush(ranked_file);
-        }
-
-        if(predicate_type[INST_SIZE+i]==NUM_SUCCESSORS_GT && exec_cnt_succ>predicate_boundary[INST_SIZE+i]){
-          new_counterexample_for_predicate_cnt++;
-          fprintf(ranked_file, "bb_id: %d, NUM_SUCCESSORS is %d\n", exec_cnt_succ);
-          fflush(ranked_file);
-        }
-
-        if(predicate_type[INST_SIZE+i]==NUM_SUCCESSORS_EQ && exec_cnt_succ==predicate_boundary[INST_SIZE+i]){
-          new_counterexample_for_predicate_cnt++;
-          fprintf(ranked_file, "bb_id: %d, NUM_SUCCESSORS is %d\n", exec_cnt_succ);
-          fflush(ranked_file);
+          //fprintf(ranked_file, "bb_id: %d, has_edge_to or NUM_SUCCESSORS is %d\n", i, exec_cnt_succ);
+          //fflush(ranked_file);
+          continue;
         }
       }
     }
@@ -2416,6 +2499,11 @@ static inline u8 has_new_non_crashes_values() {
     for(i=0; i<INST_SIZE; i++){
       if (trace_bits->is_visited[i] == 0)
         continue;
+      
+      //if(i==682){
+      //  fprintf(ranked_file, "[LOG] inst_id: %d, min_v = 0x%lx\n", i, trace_bits->min_value[i]);
+      //  fflush(ranked_file);
+      //}
 
       u32 min_cksum = hash32(&trace_bits->min_value[i], 8, HASH_CONST);
       min_cksum = min_cksum & 0xff;
@@ -2436,7 +2524,7 @@ static inline u8 has_new_non_crashes_values() {
       *non_crashes_virgin |= (u8)(1 << (eflags_cksum % 8));
     }
 
-    i = MAP_SIZE;
+    i = BB_SIZE;
     while(i--){
       if (trace_bits->is_visited[INST_SIZE+i] == 0)
         continue;
@@ -2866,7 +2954,8 @@ static void update_value_bitmap_score(struct queue_entry *q) {
     }
   }
 
-  for (i = MAP_SIZE; i>0 ; i--) {
+  for (i = 1; i<BB_SIZE ; i++) {
+    /*
     temp_v = global_bb_info[i].is_visited;
     while (temp_v) {
       if(trace_bits->is_visited[INST_SIZE+i] ==temp_v->value){
@@ -2875,6 +2964,7 @@ static void update_value_bitmap_score(struct queue_entry *q) {
       }
       temp_v = temp_v->next;
     }
+    */
 
     if (trace_bits->is_visited[INST_SIZE+i]== 0)
       continue;
@@ -2907,17 +2997,6 @@ static void update_value_bitmap_score(struct queue_entry *q) {
         break;
       }
       temp_v = temp_v->next;
-    }
-    
-    if(exec_cnt_succ==1){
-      temp_v = global_bb_info[i].always_taken_to;
-      while (temp_v) {
-        if(edge_to ==temp_v->value){
-          update_value_top_rated(temp_v, q, fav_factor, q->is_crash);
-          break;
-        }
-        temp_v = temp_v->next;
-      }
     }
   }
 }
@@ -3034,7 +3113,8 @@ static void cull_queue_value(void) {
 
   update_predicate_selection_gamma();
   select_predicate();
-  for (u32 k = 0; k < top_k; k++) {
+  selected_predicate=0xffffffff;
+  for (u32 k = 0; k < TOP_K; k++) {
     i = sample_predicate();
     if(i==0xffffffff)
       continue;
@@ -3075,26 +3155,7 @@ static void cull_queue_value(void) {
         selected_predicate=i;
         break;
       }
-    }else if(predicate_type[i]==IS_VISITED){
-      temp_v = get_max_unfuzzed_non_crashes_value_info(global_bb_info[i-INST_SIZE].is_visited);
-      if (unlikely(temp_v) && temp_v->value>0){
-        queue_first = temp_v->non_crashes_top_rated;
-        temp_v->non_crashes_was_fuzzed = 1;
-        queue_first->favored = 1;
-        selected_predicate=i;
-        break;
-      }
-
-      temp_v = get_max_unfuzzed_crashes_value_info(global_bb_info[i-INST_SIZE].is_visited);
-      if (unlikely(temp_v)){
-        queue_first = temp_v->crashes_top_rated;
-        temp_v->crashes_was_fuzzed = 1;
-        queue_first->favored = 1;
-        selected_predicate=i;
-        break;
-      }
-    }
-    else if(predicate_type[i]==HAS_EDGE_TO){
+    }else if(predicate_type[i]==HAS_EDGE_TO){
       temp_v = get_equal_unfuzzed_non_crashes_value_info(global_bb_info[i-INST_SIZE].has_edge_to, predicate_boundary[i]);
       if (unlikely(temp_v)){
         queue_first = temp_v->non_crashes_top_rated;
@@ -3114,60 +3175,6 @@ static void cull_queue_value(void) {
       }
 
       temp_v = get_not_equal_unfuzzed_crashes_value_info(global_bb_info[i-INST_SIZE].has_edge_to, predicate_boundary[i]);
-      if (unlikely(temp_v)){
-        queue_first = temp_v->crashes_top_rated;
-        temp_v->crashes_was_fuzzed = 1;
-        queue_first->favored = 1;
-        selected_predicate=i;
-        break;
-      }
-    }else if(predicate_type[i]==EDGE_ONLY_TAKEN_TO){
-      temp_v = get_equal_unfuzzed_non_crashes_value_info(global_bb_info[i-INST_SIZE].always_taken_to, predicate_boundary[i]);
-      if (unlikely(temp_v)){
-        queue_first = temp_v->non_crashes_top_rated;
-        temp_v->non_crashes_was_fuzzed = 1;
-        queue_first->favored = 1;
-        selected_predicate=i;
-        break;
-      }
-
-      temp_v = get_equal_unfuzzed_crashes_value_info(global_bb_info[i-INST_SIZE].always_taken_to, predicate_boundary[i]);
-      if (unlikely(temp_v)){
-        queue_first = temp_v->crashes_top_rated;
-        temp_v->crashes_was_fuzzed = 1;
-        queue_first->favored = 1;
-        selected_predicate=i;
-        break;
-      }
-
-      temp_v = get_not_equal_unfuzzed_crashes_value_info(global_bb_info[i-INST_SIZE].has_edge_to, predicate_boundary[i]);
-      if (unlikely(temp_v)){
-        queue_first = temp_v->crashes_top_rated;
-        temp_v->crashes_was_fuzzed = 1;
-        queue_first->favored = 1;
-        selected_predicate=i;
-        break;
-      }
-    }else if(predicate_type[i]==NUM_SUCCESSORS_EQ){
-      temp_v = get_equal_unfuzzed_non_crashes_value_info(global_bb_info[i-INST_SIZE].num_successors, predicate_boundary[i]);
-      if (unlikely(temp_v)){
-        queue_first = temp_v->non_crashes_top_rated;
-        temp_v->non_crashes_was_fuzzed = 1;
-        queue_first->favored = 1;
-        selected_predicate=i;
-        break;
-      }
-
-      temp_v = get_equal_unfuzzed_crashes_value_info(global_bb_info[i-INST_SIZE].num_successors, predicate_boundary[i]);
-      if (unlikely(temp_v)){
-        queue_first = temp_v->crashes_top_rated;
-        temp_v->crashes_was_fuzzed = 1;
-        queue_first->favored = 1;
-        selected_predicate=i;
-        break;
-      }
-
-      temp_v = get_not_equal_unfuzzed_crashes_value_info(global_bb_info[i-INST_SIZE].num_successors, predicate_boundary[i]);
       if (unlikely(temp_v)){
         queue_first = temp_v->crashes_top_rated;
         temp_v->crashes_was_fuzzed = 1;
@@ -3276,25 +3283,25 @@ EXP_ST void setup_shm(void) {
 
   if (!in_bitmap) {
     memset(virgin_bits, 255, MAP_SIZE);
-    memset(virgin_bits_crashes, 0, INST_SIZE*96+MAP_SIZE*32);
-    memset(virgin_bits_non_crashes, 0, INST_SIZE*96+MAP_SIZE*32);
+    memset(virgin_bits_crashes, 0, INST_SIZE*96+BB_SIZE*32);
+    memset(virgin_bits_non_crashes, 0, INST_SIZE*96+BB_SIZE*32);
   }
   memset(virgin_tmout, 255, MAP_SIZE);
   memset(virgin_crash, 255, MAP_SIZE);
 
   memset(global_inst_info,0,sizeof(struct inst_info)*INST_SIZE);
-  memset(global_bb_info,0,sizeof(struct control_flow_info)*MAP_SIZE);
+  memset(global_bb_info,0,sizeof(struct control_flow_info)*BB_SIZE);
   memset(global_inst_source_info, 0, sizeof(struct inst_source_info)*INST_SIZE);
-  memset(global_bb_source_info, 0, sizeof(struct bb_source_info)*MAP_SIZE);
+  memset(global_bb_source_info, 0, sizeof(struct bb_source_info)*BB_SIZE);
 
-  memset(predicate_score, 0, sizeof(double) * (INST_SIZE+MAP_SIZE));
-  memset(predicate_boundary, 0, sizeof(u64) * (INST_SIZE+MAP_SIZE));
-  memset(predicate_type, 0, sizeof(enum Predicate) * (INST_SIZE+MAP_SIZE));
-  memset(predicate_seq, 0, sizeof(u32) * (INST_SIZE+MAP_SIZE));
-  memset(target_predicate, 0xff, sizeof(u32) * (INST_SIZE+MAP_SIZE));
+  memset(predicate_score, 0, sizeof(double) * (INST_SIZE+BB_SIZE));
+  memset(predicate_boundary, 0, sizeof(u64) * (INST_SIZE+BB_SIZE));
+  memset(predicate_type, NULL_PREDICATE, sizeof(enum Predicate) * (INST_SIZE+BB_SIZE));
+  memset(predicate_seq, 0, sizeof(double) * (INST_SIZE+BB_SIZE));
+  memset(target_predicate, 0xff, sizeof(u32) * TOP_K);
 
-  memset(cumulative_predicate_reward, 0, sizeof(double)*(INST_SIZE+MAP_SIZE));
-  memset(predicate_selected_cnt, 0, sizeof(u32)*(INST_SIZE+MAP_SIZE));
+  memset(cumulative_predicate_reward, 0, sizeof(double)*(INST_SIZE+BB_SIZE));
+  memset(predicate_selected_cnt, 0, sizeof(u32)*(INST_SIZE+BB_SIZE));
 
   cumulative_loc_reward = (double*)realloc(cumulative_loc_reward,sizeof(double)*head_bytes_size);
   loc_selected_cnt = (u32*)realloc(loc_selected_cnt,sizeof(u32)*head_bytes_size);
@@ -4634,7 +4641,7 @@ static u8 calibrate_case(char **argv, struct queue_entry *q, u8 *use_mem,
     write_to_testcase(use_mem, q->len);
 
     fault = run_target(argv, use_tmout);
-
+    
     /* stop_soon is set by the handler for Ctrl+C. When it's pressed,
        we want to bail out quickly. */
 
@@ -5228,7 +5235,7 @@ static u8 save_if_interesting(char **argv, void *mem, u32 len, u8 fault) {
 
   if (fault == crash_mode) {
     // same crash point
-    if(global_last_id!=0xffffffffffffffff){
+    if(global_last_id!=0xffffffff){
       if(trace_bits->last_inst_id!=global_last_id)
         return 0;
     }
@@ -5278,16 +5285,15 @@ static u8 save_if_interesting(char **argv, void *mem, u32 len, u8 fault) {
     ck_write(fd, mem, len, fn);
     close(fd);
 
-    counterexample_rate = new_counterexample_for_predicate_cnt*1.00/top_k;
+    counterexample_rate = new_counterexample_for_predicate_cnt*1.00/TOP_K;
     add_to_global_values(1);
     root_cause_analysis();
     update_value_bitmap_score(queue_top);
     keeping = 1; 
     if (stop_soon)
       return keeping;
-  }
+  }else if (fault == FAULT_NONE) {
 
-  if (fault == FAULT_NONE) {
     hnb = has_new_non_crashes_values();
     if(!hnb){
       // Update_State
@@ -5329,7 +5335,7 @@ static u8 save_if_interesting(char **argv, void *mem, u32 len, u8 fault) {
     ck_write(fd, mem, len, fn);
     close(fd);
     
-    counterexample_rate = new_counterexample_for_predicate_cnt*1.00/top_k;
+    counterexample_rate = new_counterexample_for_predicate_cnt*1.00/TOP_K;
     add_to_global_values(0);
     root_cause_analysis();
     update_value_bitmap_score(queue_top);
@@ -8421,6 +8427,7 @@ havoc_stage:
     memset(loc_selected_map, 0, head_bytes_size);
     p_selected_loc = 0;
     p_selected_loc_cnt = 0;
+    //loc_greater_than_head_bytes_size = 0;
 
     memset(op_selected_map, 0, 17);
     p_selected_op = 0;
@@ -8812,7 +8819,7 @@ havoc_stage:
       else{
         *(loc_selected_map+posn) = 1;
       }
-      */
+      //*/
      
       if(posn<head_bytes_size)
         *(loc_selected_map+posn) = 1;
@@ -8824,15 +8831,16 @@ havoc_stage:
       memset(loc_selected_map, 0, head_bytes_size);
       p_selected_loc_cnt = 0;
       p_selected_loc = 0;
-    }*/
+    }//*/
 
     if (common_fuzz_stuff(argv, out_buf, temp_len))
       goto abandon_entry;
     
+    ///*
     if(global_rank_info && ((get_cur_time() - start_time) / 1000-global_rank_info->update_time>1800)){
       stop_soon = 2;
       goto abandon_entry;
-    }
+    }//*/
     mutation_inputs++;
     
 
@@ -8849,7 +8857,7 @@ havoc_stage:
 
     if (queued_paths != havoc_queued) {
 
-      if (perf_score <= HAVOC_MAX_MULT * 100) {
+      if (perf_score < HAVOC_MAX_MULT * 100/2) {
         stage_max  *= 2;
         perf_score *= 2;
       }
@@ -10493,7 +10501,7 @@ int main(int argc, char **argv) {
     cull_queue_value();
 
     if (stop_soon)
-      break;
+      goto stop_fuzzing;
 
     if (queue_first){
       
@@ -10502,8 +10510,20 @@ int main(int argc, char **argv) {
       cur_skipped_paths = 0;
       queue_cur = queue_first;
       queue_cur->was_fuzzed = 0;
-      
+
     }else if(!queue_cur) {
+      struct queue_entry* q = queue;
+      u8 was_not_fuzzed = 0;
+      while (q) {
+        q->favored = 1;
+        if(!q->was_fuzzed)
+          was_not_fuzzed = 1;
+        q = q->next;
+      }
+      if (!was_not_fuzzed){
+        stop_soon = 2;
+        goto stop_fuzzing;
+      }
 
       queue_cycle++;
       current_entry = 0;
@@ -10543,7 +10563,7 @@ int main(int argc, char **argv) {
 
     }
 
-    fprintf(ranked_file,"queue_cycle: %d, queue_cur: %s, queue->len: %d\n", queue_cycle, queue_cur->fname, queue_cur->len);
+    fprintf(ranked_file,"queue_cycle: %d, queue_cur: %s, queue->len: %d, mutation_inputs: %d\n", queue_cycle, queue_cur->fname, queue_cur->len, mutation_inputs);
     fflush(ranked_file);
 
     skipped_fuzz = fuzz_one(use_argv);
@@ -10617,4 +10637,3 @@ stop_fuzzing:
 }
 
 #endif /* !AFL_LIB */
-

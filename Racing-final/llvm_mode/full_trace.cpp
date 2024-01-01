@@ -167,17 +167,6 @@ void Tracer::dofinish() {
   *bb_id_steam << bb_id<<"," << bb_startIndex << '\n';
   bb_id_steam->close();
 
-  /*
-  for (const auto sourceCodeInfoEntry : inst_id_map) {
-    const std::string sourceCodeInfo = sourceCodeInfoEntry.first;
-    for (const auto instructionInfoEntry : sourceCodeInfoEntry.second) {
-      const std::string instructionInfo = instructionInfoEntry.first;
-      int instructionID = instructionInfoEntry.second;
-      *trace_id_steam << sourceCodeInfo << "," << instructionInfo << "," << instructionID << std::endl;
-    }
-  }
-  trace_id_steam->close();
-  */
   for (auto sourceCodeInfoEntry : inst_id_map) {
     std::string sourceCodeInfo = sourceCodeInfoEntry.first;
     for (auto instructionEntry : sourceCodeInfoEntry.second) {
@@ -186,6 +175,7 @@ void Tracer::dofinish() {
       if (instruction.size() > 200)
         instruction = instruction.substr(0, 200);
       
+      std::replace(instruction.begin(), instruction.end(), '\n', ' ');
       *trace_id_steam << "[Inst Info] " << instructionID << " ###### " << instruction << " ###### " << sourceCodeInfo << "\n";
     }
   }
@@ -193,7 +183,7 @@ void Tracer::dofinish() {
   for (auto entry : bb_id_map) {
     uint32_t bbID = entry.first;
     struct BBInfo info = entry.second;
-
+    
     *trace_id_steam << "[BB Info] " << bbID << " ###### " << info.firstInst << " ###### " << info.lastInst << "\n";
   }
 
@@ -205,6 +195,11 @@ bool Tracer::runOnFunction(Function &F, std::vector<std::string> &target) {
   std::map<BasicBlock*, u16> recorded_bb;
   recorded_bb.clear();
 
+  if (F.hasFnAttribute(Attribute::AlwaysInline) || F.hasFnAttribute(Attribute::InlineHint)) {
+    //*trace_id_steam << "\n" << filename+": skip inline function "+F.getName()<<"\n";
+    return func_modified;
+  }
+
   for (auto bb_it = F.begin(); bb_it != F.end(); ++bb_it) {
     BasicBlock &bb = *bb_it;
     bool trace_bb = false;
@@ -212,15 +207,19 @@ bool Tracer::runOnFunction(Function &F, std::vector<std::string> &target) {
       getDebugLoc(cast<Instruction>(itr), filename, line, column);
       if (filename.empty() || line == 0)
         continue;
+      
       std::size_t found = filename.find_last_of("/\\");
       if (found != std::string::npos)
         filename = filename.substr(found + 1);
       auto findline = find(begin(target), end(target),
                            filename + ':' + std::to_string(line));
       if (findline != std::end(target)) {
-        trace_bb = true;
-        target.erase(findline);
-        break;
+        Instruction *currInst = cast<Instruction>(itr);
+        if(!currInst->isTerminator()){
+          trace_bb = true;
+          //target.erase(findline);
+          break;
+        }
       }
     }
     if (trace_bb) {
@@ -254,11 +253,45 @@ bool Tracer::runOnFunction(Function &F, std::vector<std::string> &target) {
     std::string tmp_filename;
     unsigned tmp_line, tmp_column;
     struct BBInfo tmp_bb_info;
-    getDebugLoc(cast<Instruction>(it->first->begin()), tmp_filename, tmp_line, tmp_column);
+
+    BasicBlock::iterator loc = it->first->getFirstInsertionPt();
+    //loc++;
+    //if(loc==it->first->end())
+    //  loc--;
+    while(loc!=it->first->end()){
+      Instruction *currInst = cast<Instruction>(loc);
+      if (CallInst *I = dyn_cast<CallInst>(currInst)) {
+        Function *called_func = I->getCalledFunction();
+        if (called_func && called_func->isIntrinsic()) {
+          loc++;
+          continue;
+        }
+      }
+      getDebugLoc(cast<Instruction>(loc), tmp_filename, tmp_line, tmp_column);
+      if(!tmp_filename.empty())
+        break;
+      loc++;
+    }
+    
+
+    /*
+    loc++;
+    if(loc==it->first->end())
+      loc--;
+    for(; loc!=it->first->end(); loc++){
+      getDebugLoc(cast<Instruction>(loc), tmp_filename, tmp_line, tmp_column);
+      if(!tmp_filename.empty())
+        break;
+    }
+    */
     tmp_bb_info.firstInst = tmp_filename + ':' + std::to_string(tmp_line);
-    getDebugLoc(cast<Instruction>(--(it->first->end())), tmp_filename, tmp_line, tmp_column);
+
+    loc = it->first->end();
+    getDebugLoc(cast<Instruction>(--loc), tmp_filename, tmp_line, tmp_column);
     tmp_bb_info.lastInst = tmp_filename + ':' + std::to_string(tmp_line);
     bb_id_map[bb_id] = tmp_bb_info;
+    
+
 
     BasicBlock::iterator IP = (*(it->first)).getFirstInsertionPt();
     IRBuilder<> IRB(&(*IP));
@@ -283,20 +316,22 @@ bool Tracer::runOnBasicBlock(BasicBlock &BB, std::vector<std::string> &target) {
   BasicBlock::iterator insertp = BB.getFirstInsertionPt();
   BasicBlock::iterator itr = BB.begin();
 
+  /*
   if (isa<PHINode>(itr)) {
     getDebugLoc(cast<Instruction>(itr), filename, line, column);
     handlePhiNodes(&BB);
-  }
+  }*/
 
   // From this point onwards, nodes cannot be PHI nodes.
-  BasicBlock::iterator nextitr;
-  for (BasicBlock::iterator itr = insertp; itr != BB.end(); itr = nextitr) {
+  BasicBlock::iterator nextitr, previtr=BB.end();
+  for (BasicBlock::iterator itr = insertp; itr != BB.end(); previtr=itr, itr = nextitr) {
 
     nextitr = itr;
     nextitr++;
 
     getDebugLoc(cast<Instruction>(itr), filename, line, column);
 
+    
     // Invoke instructions are used to call functions that may throw exceptions.
     // They are the only the terminator instruction that can also return a
     // value. 
@@ -306,21 +341,30 @@ bool Tracer::runOnBasicBlock(BasicBlock &BB, std::vector<std::string> &target) {
     }
 
     Instruction *currInst = cast<Instruction>(itr);
-    if (ZExtInst *Izext = dyn_cast<ZExtInst>(currInst))
-      continue;
+    //*trace_id_steam << "\n" << filename+":"+std::to_string(line)<<"\n";
+    //currInst->print(*trace_id_steam);
     
-    if (auto bitcast_I = dyn_cast<BitCastInst>(currInst))
+    if (isa<PtrToIntInst>(currInst) || isa<IntToPtrInst>(currInst) || isa<BitCastInst>(currInst) || isa<ZExtInst>(currInst) || isa<SExtInst>(currInst))
       continue;
+    //if (isa<BitCastInst>(currInst) || isa<ZExtInst>(currInst) || isa<SExtInst>(currInst))
+      
+    //if (isa<BitCastInst>(currInst))
+    //  continue;
     
     if (CallInst *I = dyn_cast<CallInst>(currInst)) {
       Function *called_func = I->getCalledFunction();
       if (!called_func || called_func->isIntrinsic()) {
         continue;
       }
-
-      handleCallInstruction(currInst);
+      Instruction *prevInst = cast<Instruction>(previtr);
+      handleCallInstruction(currInst, prevInst);
     }else {
-      handleNonPhiNonCallInstruction(currInst);
+      if(previtr==BB.end())
+        handleNonPhiNonCallInstruction(currInst, NULL);
+      else{
+        Instruction *prevInst = cast<Instruction>(previtr);
+        handleNonPhiNonCallInstruction(currInst, prevInst);
+      }
     }
 
     if (!currInst->getType()->isVoidTy()) {
@@ -352,7 +396,7 @@ bool Tracer::runOnBasicBlock(BasicBlock &BB, std::vector<std::string> &target) {
       ArrayRef<Value *> Args = None;
       CallInst *v_result = IRB.CreateCall(Asm, Args);
 
-      Value *v_inst_id = ConstantInt::get(IRB.getInt64Ty(), id);//inst_id-1);
+      Value *v_inst_id = ConstantInt::get(IRB.getInt32Ty(), id);//inst_id-1);
       Value *args[] = {v_result, v_inst_id};
       IRB.CreateCall(TL_trace_register, args);
     }
@@ -363,12 +407,13 @@ bool Tracer::runOnBasicBlock(BasicBlock &BB, std::vector<std::string> &target) {
 
 uint32_t Tracer::getInstructionID(std::string instructionInfo, std::string Filename, unsigned Line) {
   std::string sourceCodeInfo = Filename + ':' + std::to_string(Line);
+  std::string pre_sourceCodeInfo = Filename + ':' + std::to_string(Line-1);
   uint32_t id = 0;
 
   if (inst_id_map.find(sourceCodeInfo) != inst_id_map.end() && inst_id_map[sourceCodeInfo].find(instructionInfo) != inst_id_map[sourceCodeInfo].end()) {
     id = inst_id_map[sourceCodeInfo][instructionInfo];
     hasBeenInstrumented = true;
-  } else {
+  }else {
     id = inst_id;
     inst_id = (inst_id + 1) % INST_SIZE;
     inst_id_map[sourceCodeInfo][instructionInfo] = id;
@@ -377,11 +422,12 @@ uint32_t Tracer::getInstructionID(std::string instructionInfo, std::string Filen
   return id;
 }
 
-void Tracer::handleCallInstruction(Instruction *inst) {
+void Tracer::handleCallInstruction(Instruction *inst, Instruction *prevInst) {
   CallInst *CI = dyn_cast<CallInst>(inst);
   Function *fun = CI->getCalledFunction();
   int call_id = 0;
   Value *value, *curr_operand;
+  Value *prev_value = prevInst;
   for (auto arg_it = fun->arg_begin(); arg_it != fun->arg_end();
        ++arg_it, ++call_id) {
     curr_operand = inst->getOperand(call_id);
@@ -396,12 +442,20 @@ void Tracer::handleCallInstruction(Instruction *inst) {
         value = curr_operand;
       }
     }
+
     if (isa<Constant>(*value))
       continue;
-
-    //outs() << "handleCallInstruction: inst_id is " << inst_id << "\n";
-    //*trace_id_steam << "\nhandleCallInstruction: inst_id is " << inst_id;
     
+    if(prev_value==value)
+      continue;
+    
+    //if (isa<PtrToIntInst>(value) || isa<IntToPtrInst>(value) || isa<BitCastInst>(value) || isa<ZExtInst>(value) || isa<SExtInst>(value))
+    //  continue;
+    
+    //if (isa<PtrToIntInst>(value) || isa<IntToPtrInst>(value) || isa<BitCastInst>(value) || isa<ZExtInst>(value))// || isa<PHINode>(value))
+    //  continue;
+    //if (isa<BitCastInst>(value))
+    //  continue;
 
     IRBuilder<> IRB(inst);
     Value *v_value;
@@ -414,26 +468,25 @@ void Tracer::handleCallInstruction(Instruction *inst) {
     else
       v_value = IRB.CreateZExtOrTrunc(value, IRB.getInt64Ty());
 
-    //Value *v_inst_id = ConstantInt::get(IRB.getInt64Ty(), inst_id);
 
-    //*trace_id_steam << "\n" << inst_id << "\n";
-    //value->print(*trace_id_steam);
     std::string inst_info; 
     raw_string_ostream stream(inst_info);
     value->print(stream);
     uint32_t id = getInstructionID(inst_info, filename, line);
     if(!hasBeenInstrumented){
-      Value *v_inst_id = ConstantInt::get(IRB.getInt64Ty(), id);
+      Value *v_inst_id = ConstantInt::get(IRB.getInt32Ty(), id);
+      //*trace_id_steam << "\nhandleCallInstruction: " << id << "\n";
+      //value->print(*trace_id_steam);
     
       Value *args[] = {v_value, v_inst_id};
       IRB.CreateCall(TL_trace_value, args);
-      //inst_id = (inst_id + 1) % INST_SIZE;
     }
   }
 }
 
-void Tracer::handleNonPhiNonCallInstruction(Instruction *inst) {
+void Tracer::handleNonPhiNonCallInstruction(Instruction *inst, Instruction *prevInst) {
   int num_of_operands = inst->getNumOperands();
+  Value *prev_value = prevInst;
   if (num_of_operands > 0) {
     for (int i = num_of_operands - 1; i >= 0; i--) {
       Value *curr_operand = inst->getOperand(i);
@@ -452,11 +505,20 @@ void Tracer::handleNonPhiNonCallInstruction(Instruction *inst) {
           value = curr_operand;
         }
       }
+
       if (isa<Constant>(*value))
         continue;
 
-      //outs() << "handleNonPhiNonCallInstruction: inst_id is " << inst_id << "\n";
-      //*trace_id_steam << "\nhandleNonPhiNonCallInstruction: inst_id is " << inst_id;
+      if(prev_value==value)
+        continue;
+      
+      //if (isa<PtrToIntInst>(value) || isa<IntToPtrInst>(value) || isa<BitCastInst>(value) || isa<ZExtInst>(value) || isa<SExtInst>(value))
+      //  continue;
+
+      //if (isa<PtrToIntInst>(value) || isa<IntToPtrInst>(value) || isa<BitCastInst>(value) || isa<ZExtInst>(value))// || isa<PHINode>(value))
+      //  continue;
+      //if (isa<BitCastInst>(value))
+      //  continue;
 
       IRBuilder<> IRB(inst);
       Value *v_value;
@@ -469,20 +531,19 @@ void Tracer::handleNonPhiNonCallInstruction(Instruction *inst) {
       else
         v_value = IRB.CreateZExtOrTrunc(value, IRB.getInt64Ty());
 
-      //Value *v_inst_id = ConstantInt::get(IRB.getInt64Ty(), inst_id);
-      
-      //*trace_id_steam << "\n" << inst_id << "\n";
-      //value->print(*trace_id_steam);
       std::string inst_info; 
       raw_string_ostream stream(inst_info);
       value->print(stream);
       uint32_t id = getInstructionID(inst_info, filename, line);
       if(!hasBeenInstrumented){
-        Value *v_inst_id = ConstantInt::get(IRB.getInt64Ty(), id);
+        Value *v_inst_id = ConstantInt::get(IRB.getInt32Ty(), id);
+        //*trace_id_steam << "\nhandleNonPhiNonCallInstruction: " << id << "\n";
+        //inst->print(*trace_id_steam);
+        //*trace_id_steam << "\n";
+        //value->print(*trace_id_steam);
 
         Value *args[] = {v_value, v_inst_id};
         IRB.CreateCall(TL_trace_value, args);
-        //inst_id = (inst_id + 1) % INST_SIZE;
       }
     }
   }
@@ -496,13 +557,17 @@ void Tracer::handlePhiNodes(BasicBlock *BB) {
 
   Value *v_value;
   Value *curr_operand = nullptr;
+  
   for (BasicBlock::iterator itr = BB->begin(); isa<PHINode>(itr); itr++) {
     Instruction *currInst = cast<Instruction>(itr);
-    if (ZExtInst *Izext = dyn_cast<ZExtInst>(currInst))
-      continue;
-    
-    if (auto bitcast_I = dyn_cast<BitCastInst>(currInst))
-      continue;
+
+    //if (isa<PtrToIntInst>(currInst) || isa<IntToPtrInst>(currInst) || isa<BitCastInst>(currInst) || isa<ZExtInst>(currInst) || isa<SExtInst>(currInst))
+    //  continue;
+
+    //if (isa<PtrToIntInst>(currInst) || isa<IntToPtrInst>(currInst) || isa<BitCastInst>(currInst) || isa<ZExtInst>(currInst))
+    //  continue;
+    //if (isa<BitCastInst>(currInst))
+    //  continue;
     
     // Print each operand.
     int num_of_operands = currInst->getNumOperands();
@@ -517,9 +582,6 @@ void Tracer::handlePhiNodes(BasicBlock *BB) {
           if (isa<Constant>(*value))
             continue;
 
-          //outs() << "handlePhiNodes-operands: inst_id is " << inst_id << "\n";
-          //*trace_id_steam << "\nhandlePhiNodes-operands: inst_id is " << inst_id;
-
           IRBuilder<> IRB(insertPointInst);
 
           if (value->getType()->isMetadataTy())
@@ -531,21 +593,17 @@ void Tracer::handlePhiNodes(BasicBlock *BB) {
           else
             v_value = IRB.CreateZExtOrTrunc(value, IRB.getInt64Ty());
 
-          //Value *v_inst_id = ConstantInt::get(IRB.getInt64Ty(), inst_id);
-          
-          //*trace_id_steam << "\n" << inst_id << "\n";
-          //value->print(*trace_id_steam);
-
           std::string inst_info; 
           raw_string_ostream stream(inst_info);
           value->print(stream);
           uint32_t id = getInstructionID(inst_info, filename, line);
           if(!hasBeenInstrumented){
-            Value *v_inst_id = ConstantInt::get(IRB.getInt64Ty(), id);
-
+            Value *v_inst_id = ConstantInt::get(IRB.getInt32Ty(), id);
+            //*trace_id_steam << "\nhandlePhiNodes-operands: " << id << "\n";
+            //value->print(*trace_id_steam);
+          
             Value *args[] = {v_value, v_inst_id};
             IRB.CreateCall(TL_trace_value, args);
-            //inst_id = (inst_id + 1) % INST_SIZE;
           }
         }
       }
@@ -560,8 +618,6 @@ void Tracer::handlePhiNodes(BasicBlock *BB) {
         Value *value = currInst;
         if (isa<Constant>(*value))
           continue;
-        //outs() << "handlePhiNodes-result: inst_id is " << inst_id << "\n";
-        //*trace_id_steam << "\nhandlePhiNodes-result: inst_id is " << inst_id;
 
         IRBuilder<> IRB(insertPointInst);
 
@@ -574,21 +630,17 @@ void Tracer::handlePhiNodes(BasicBlock *BB) {
         else
           v_value = IRB.CreateZExtOrTrunc(value, IRB.getInt64Ty());
 
-        //Value *v_inst_id = ConstantInt::get(IRB.getInt64Ty(), inst_id);
-        
-        //*trace_id_steam << "\n" << inst_id << "\n";
-        //value->print(*trace_id_steam);
-
         std::string inst_info; 
         raw_string_ostream stream(inst_info);
         value->print(stream);
         uint32_t id = getInstructionID(inst_info, filename, line);
         if(!hasBeenInstrumented){
-          Value *v_inst_id = ConstantInt::get(IRB.getInt64Ty(), id);
+          Value *v_inst_id = ConstantInt::get(IRB.getInt32Ty(), id);
+          //*trace_id_steam << "\nhandlePhiNodes-result: " << id << "\n";
+          //value->print(*trace_id_steam);
 
           Value *args[] = {v_value, v_inst_id};
           IRB.CreateCall(TL_trace_value, args);
-          //inst_id = (inst_id + 1) % INST_SIZE;
         }
       }
     }
@@ -604,17 +656,14 @@ void Tracer::handleInstructionResult(Instruction *inst,
 
     if (isa<Constant>(*value))
       return;
+
     /*
     int num_of_operands = next_inst->getNumOperands();
     for (int i = 0; i < num_of_operands; i++) {
       Value *next_operand = next_inst->getOperand(i);
       if (next_operand == value)
         return;
-    }
-    */
-
-    //outs() << "handleInstructionResult: inst_id is " << inst_id << "\n";
-    //*trace_id_steam << "\nhandleInstructionResult: inst_id is " << inst_id;
+    }*/
 
     IRBuilder<> IRB(next_inst);
     Value *v_value;
@@ -627,21 +676,17 @@ void Tracer::handleInstructionResult(Instruction *inst,
     else
       v_value = IRB.CreateZExtOrTrunc(value, IRB.getInt64Ty());
 
-    //Value *v_inst_id = ConstantInt::get(IRB.getInt64Ty(), inst_id);
-
-    //*trace_id_steam << "\n" << inst_id << "\n";
-    //value->print(*trace_id_steam);
-
     std::string inst_info; 
     raw_string_ostream stream(inst_info);
     value->print(stream);
     uint32_t id = getInstructionID(inst_info, filename, line);
     if(!hasBeenInstrumented){
-      Value *v_inst_id = ConstantInt::get(IRB.getInt64Ty(), id);
+      Value *v_inst_id = ConstantInt::get(IRB.getInt32Ty(), id);
+      //*trace_id_steam << "\nhandleInstructionResult: " << id << "\n";
+      //value->print(*trace_id_steam);
 
       Value *args[] = {v_value, v_inst_id};
       IRB.CreateCall(TL_trace_value, args);
-      //inst_id = (inst_id + 1) % INST_SIZE;
     }
   }
 }

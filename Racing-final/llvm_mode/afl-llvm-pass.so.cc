@@ -185,6 +185,29 @@ bool AFLCoverage::runOnModule(Module &M) {
 
   doInitialization(M);
 
+  if (KeepIntermediate) {
+    int status = mkdir("./.tmp", S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+    if (status == 0) {
+      WARNF("failed to create .tmp dir.");
+    } else {
+      std::error_code ErrInfo;
+      std::string filename = M.getSourceFileName();
+      filename = filename.substr(filename.find_last_of("/\\") + 1);
+      char *modified_file = alloc_printf("%s/.afl-%s-%u-origin.ll", "./.tmp",
+                                        filename.c_str(), (u32)time(NULL));
+      raw_ostream *out = new raw_fd_ostream(std::string(modified_file), ErrInfo,
+                                            sys::fs::OpenFlags::F_RW);
+      if (out == nullptr) {
+        WARNF("failed to open %s\n", modified_file);
+      } else {
+        SAYF("write to %s\n", modified_file);
+        M.print(*out, 0);
+        out->flush();
+        delete out;
+      }
+    }
+  }
+
   /* Instrument all the things! */
   int inst_blocks = 0;
   for (auto &F : M) {
@@ -235,20 +258,25 @@ bool AFLCoverage::runOnModule(Module &M) {
   dofinish();
 
   if (KeepIntermediate) {
-    std::error_code ErrInfo;
-    std::string filename = M.getSourceFileName();
-    filename = filename.substr(filename.find_last_of("/\\") + 1);
-    char *modified_file = alloc_printf("%s/.afl-%s-%u.ll", "./.tmp",
-                                       filename.c_str(), (u32)time(NULL));
-    raw_ostream *out = new raw_fd_ostream(std::string(modified_file), ErrInfo,
-                                          sys::fs::OpenFlags::F_RW);
-    if (out == nullptr) {
-      WARNF("failed to open %s\n", modified_file);
+    int status = mkdir("./.tmp", S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+    if (status == 0) {
+      WARNF("failed to create .tmp dir.");
     } else {
-      SAYF("write to %s\n", modified_file);
-      M.print(*out, 0);
-      out->flush();
-      delete out;
+      std::error_code ErrInfo;
+      std::string filename = M.getSourceFileName();
+      filename = filename.substr(filename.find_last_of("/\\") + 1);
+      char *modified_file = alloc_printf("%s/.afl-%s-%u.ll", "./.tmp",
+                                        filename.c_str(), (u32)time(NULL));
+      raw_ostream *out = new raw_fd_ostream(std::string(modified_file), ErrInfo,
+                                            sys::fs::OpenFlags::F_RW);
+      if (out == nullptr) {
+        WARNF("failed to open %s\n", modified_file);
+      } else {
+        SAYF("write to %s\n", modified_file);
+        M.print(*out, 0);
+        out->flush();
+        delete out;
+      }
     }
   }
 

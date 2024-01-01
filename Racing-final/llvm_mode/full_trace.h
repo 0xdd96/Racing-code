@@ -43,8 +43,8 @@ public:
   // Instrumentation functions for different types of nodes.
   void handlePhiNodes(BasicBlock *BB);
   void handleInstructionResult(Instruction *inst, Instruction *next_inst);
-  void handleCallInstruction(Instruction *inst);
-  void handleNonPhiNonCallInstruction(Instruction *inst);
+  void handleCallInstruction(Instruction *inst, Instruction *prevInst);
+  void handleNonPhiNonCallInstruction(Instruction *inst, Instruction *prevInst);
 
   // References to the logging functions.
   Value *TL_trace_value;

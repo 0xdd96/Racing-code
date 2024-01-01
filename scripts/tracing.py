@@ -54,8 +54,9 @@ if __name__ == "__main__":
     
     # Check if output file still exits and abort
     if os.path.exists(save_path):
-        print(f"[!] Output file {save_path} already exists. Backup its contents and delete it to proceed.")
-        sys.exit(1)
+        os.remove(save_path)
+    #    print(f"[!] Output file {save_path} already exists. Backup its contents and delete it to proceed.")
+        #sys.exit(1)
     
     trace_input(src_path, target_exe, save_path)
 

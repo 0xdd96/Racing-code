@@ -329,8 +329,8 @@
 #define MAP_SIZE_POW2       16
 #define MAP_SIZE            (1 << MAP_SIZE_POW2)
 
-#define INST_SIZE            ((1 << MAP_SIZE_POW2) + ((1 << (MAP_SIZE_POW2-1))))
-//98304
+#define INST_SIZE           (1 << MAP_SIZE_POW2)
+#define BB_SIZE             (1 << (MAP_SIZE_POW2-1))
 
 /* Maximum allocator request size (keep well under INT_MAX): */
 
