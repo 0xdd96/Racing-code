@@ -1,7 +1,7 @@
 #/bin/bash
 
 EVAL_DIR=`pwd`
-export PIN_ROOT=/home/user/evaluation/pin-3.15-98253-gb56e429b1-gcc-linux
+export PIN_ROOT="${PIN_ROOT:=/Racing-eval/pin-3.15-98253-gb56e429b1-gcc-linux}"
 
 mkdir -p $EVAL_DIR/traces
 # requires at least python 3.6

@@ -1,8 +1,7 @@
 #/bin/bash
 
 EVAL_DIR=`pwd`
-RACING_DIR=/home/user/docker_share/tool/Racing/release/Racing-final
-
+RACING_DIR=${RACING_DIR:=/Racing-eval}
 
 if [ -f "$EVAL_DIR/temp_data/inst_id" ]; then
     rm "$EVAL_DIR/temp_data/inst_id"
@@ -15,5 +14,5 @@ make clean
 
 export AFL_CC=clang-6.0
 # build instrument version for fuzzing
-CC=$RACING_DIR/afl-clang-fast MYCFLAGS="-g -O0 -fsanitize=address -poc_trace=$EVAL_DIR/temp_data/poc.addr2line" MYLDFLAGS="-fsanitize=address" make -e
+CC=$RACING_DIR/Racing-code/afl-clang-fast MYCFLAGS="-g -O0 -fsanitize=address -poc_trace=$EVAL_DIR/temp_data/poc.addr2line" MYLDFLAGS="-fsanitize=address" make -e
 mv $PWD/bin/lua $EVAL_DIR/lua_fuzz

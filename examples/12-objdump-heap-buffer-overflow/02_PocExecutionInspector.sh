@@ -1,12 +1,12 @@
 #/bin/bash
 
 EVAL_DIR=`pwd`
-export PIN_ROOT=/home/user/evaluation/pin-3.15-98253-gb56e429b1-gcc-linux
-TOOL_DIR=/home/user/docker_share/tool/Racing/release
+export PIN_ROOT="${PIN_ROOT:=/Racing-eval/pin-3.15-98253-gb56e429b1-gcc-linux}"
+RACING_DIR=${RACING_DIR:=/Racing-eval}
 
-mkdir $EVAL_DIR/temp_data
+mkdir -p $EVAL_DIR/temp_data
 
-cd $TOOL_DIR/scripts/
+cd $RACING_DIR/scripts/
 python3 tracing.py "$EVAL_DIR/objdump_trace -D @@" $EVAL_DIR/seed/testcase_37a2b $EVAL_DIR/temp_data/poc.addr
 
 # Maps binary addresses to source code locations using addr2line.

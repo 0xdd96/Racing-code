@@ -1,6 +1,6 @@
 #!/bin/bash
 EVAL_DIR=`pwd`
-AFL_DIR=/home/user/docker_share/tool/Racing/release/Racing-final
+AFL_DIR=${AFL_DIR:=/Racing-eval/Racing-code}
 
 i=0
 

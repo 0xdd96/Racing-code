@@ -1,7 +1,7 @@
 #/bin/bash
 
 EVAL_DIR=`pwd`
-RACING_DIR=/home/user/docker_share/tool/Racing/release/Racing-final
+RACING_DIR=${RACING_DIR:=/Racing-eval}
 
 
 if [ -f "$EVAL_DIR/temp_data/inst_id" ]; then
@@ -16,7 +16,7 @@ cd build-rca
 
 export AFL_CC=clang-6.0
 # build instrument version for fuzzing
-CC=$RACING_DIR/afl-clang-fast  LD=$CC CFLAGS="-g -O0 -poc_trace=$EVAL_DIR/temp_data/poc.addr2line" ../configure --prefix=$PWD --disable-shared
+CC=$RACING_DIR/Racing-code/afl-clang-fast  LD=$CC CFLAGS="-g -O0 -poc_trace=$EVAL_DIR/temp_data/poc.addr2line" ../configure --prefix=$PWD --disable-shared
 make
 make install
 
