@@ -31,16 +31,13 @@ command=$1
 success_count=0
 failure_count=0
 
-
 # Define status files based on the command
 if [ "$command" == "build" ]; then
-    completed_cases_file="completed_cases.build.txt"
-    overall_status_file="overall_status.build.log"
-    scripts=("01_build_trace" "02_PocExecutionInspector" "03_build_fuzz")
+    completed_cases_file="$TEST_ROOT/completed_cases.build.txt"
+    overall_status_file="$TEST_ROOT/overall_status.build.log"
 elif [ "$command" == "run" ]; then
-    completed_cases_file="completed_cases.run.txt"
-    overall_status_file="overall_status.run.log"
-    scripts=("04_racing")
+    completed_cases_file="$TEST_ROOT/completed_cases.run.txt"
+    overall_status_file="$TEST_ROOT/overall_status.run.log"
 else
     echo "Invalid command: $command"
     echo "Usage: $0 [-j number_of_parallel_jobs] <build|run>"
@@ -93,14 +90,20 @@ run_script() {
 # Function to process each test case
 process_test_case() {
     testcase=$1
-    shift
-    scripts=("$@")
     cd $testcase
 
     # Skip already completed test cases
     if grep -q "${testcase}" "$completed_cases_file"; then
         log_message "INFO" "Skipping already completed test case: ${testcase}" "$NC"
         return 0
+    fi
+
+    if [ "$command" == "build" ]; then
+        scripts=("01_build_trace" "02_PocExecutionInspector" "03_build_fuzz")
+    elif [ "$command" == "run" ]; then
+        scripts=("04_racing")
+    else
+        return -1
     fi
 
     start_time=$(date +%s)
@@ -145,7 +148,7 @@ export TEST_ROOT
 export GREEN
 export RED
 export NC
-export scripts
+export command
 
 # Run the test cases in parallel
 parallel -k --lb -j "${num_jobs}" process_test_case ::: ${test_cases}
