@@ -3,9 +3,13 @@
 EVAL_DIR=`pwd`
 
 # clone sleuthkit
-git clone https://github.com/sleuthkit/sleuthkit.git
+# git clone https://github.com/sleuthkit/sleuthkit.git
+# cd sleuthkit
+# git checkout 3e2332a
+wget https://github.com/sleuthkit/sleuthkit/archive/3e2332a1f1917dd62ad41f84e296439ff87b878f.tar.gz
+tar xzf 3e2332a1f1917dd62ad41f84e296439ff87b878f.tar.gz
+mv sleuthkit-3e2332a1f1917dd62ad41f84e296439ff87b878f sleuthkit
 cd sleuthkit
-git checkout 3e2332a
 
 # build normal version for tracing
 ./bootstrap

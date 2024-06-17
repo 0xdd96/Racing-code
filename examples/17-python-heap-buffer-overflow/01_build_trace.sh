@@ -3,7 +3,7 @@
 EVAL_DIR=`pwd`
 
 # download python
-#wget https://github.com/python/cpython/archive/refs/tags/v2.7.11.zip
+wget https://github.com/python/cpython/archive/refs/tags/v2.7.11.zip
 unzip v2.7.11.zip
 
 # build normal version for tracing

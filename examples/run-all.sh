@@ -5,30 +5,65 @@ TEST_ROOT=$PWD
 # Default number of parallel jobs
 num_jobs=1
 
-# Parse -j flag
+# Parse -j flag and command
 while getopts "j:" opt; do
     case ${opt} in
         j )
             num_jobs=$OPTARG
             ;;
         \? )
-            echo "Usage: cmd [-j number_of_parallel_jobs]"
+            echo "Usage: cmd [-j number_of_parallel_jobs] <build|run>"
             exit 1
             ;;
     esac
 done
+shift $((OPTIND -1))
+
+# Check for command argument
+if [ "$#" -ne 1 ]; then
+    echo "Usage: $0 [-j number_of_parallel_jobs] <build|run>"
+    exit 1
+fi
+
+command=$1
 
 # Initialize counters for success and failure
 success_count=0
 failure_count=0
 
-# Track completed test cases
-completed_cases_file="$PWD/completed_cases.txt"
-overall_status_file="$PWD/overall_status.log"
+
+# Define status files based on the command
+if [ "$command" == "build" ]; then
+    completed_cases_file="completed_cases.build.txt"
+    overall_status_file="overall_status.build.log"
+    scripts=("01_build_trace" "02_PocExecutionInspector" "03_build_fuzz")
+elif [ "$command" == "run" ]; then
+    completed_cases_file="completed_cases.run.txt"
+    overall_status_file="overall_status.run.log"
+    scripts=("04_racing")
+else
+    echo "Invalid command: $command"
+    echo "Usage: $0 [-j number_of_parallel_jobs] <build|run>"
+    exit 1
+fi
 
 # Create or clear the completed cases file
-> "$completed_cases_file"
-> "$overall_status_file"
+>> "$completed_cases_file"
+>> "$overall_status_file"
+
+# ANSI color codes
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# Function to log messages with timestamp and severity
+log_message() {
+    local severity=$1
+    local message=$2
+    local color=$3
+    local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+    echo -e "${timestamp} [${severity}] ${color}${message}${NC}"
+}
 
 # Function to run a script and check its exit status
 run_script() {
@@ -37,20 +72,20 @@ run_script() {
     logfile="${script}.log"
     start_time=$(date +%s)
 
-    echo "Running ${script} for ${testcase}..."
+    log_message "INFO" "Running ${script} for ${testcase}..." "$NC"
     ./${script}.sh &> "${logfile}"
     exit_status=$?
 
     end_time=$(date +%s)
     elapsed_time=$((end_time - start_time))
 
-    echo "${script} for ${testcase} took ${elapsed_time} seconds."
+    log_message "INFO" "${script} for ${testcase} took ${elapsed_time} seconds." "$NC"
 
     if [ $exit_status -ne 0 ]; then
-        echo "${script} for ${testcase} failed. Check ${logfile} for details."
+        log_message "ERROR" "${script} for ${testcase} failed. Check ${logfile} for details." "$RED"
         return 1
     else
-        echo "${script} for ${testcase} succeeded."
+        log_message "INFO" "${script} for ${testcase} succeeded." "$GREEN"
         return 0
     fi
 }
@@ -58,33 +93,38 @@ run_script() {
 # Function to process each test case
 process_test_case() {
     testcase=$1
+    shift
+    scripts=("$@")
     cd $testcase
 
     # Skip already completed test cases
     if grep -q "${testcase}" "$completed_cases_file"; then
-        echo "Skipping already completed test case: ${testcase}"
+        log_message "INFO" "Skipping already completed test case: ${testcase}" "$NC"
         return 0
     fi
 
     start_time=$(date +%s)
+    local success=true
 
-    if run_script "${testcase}" "01_build_trace" && \
-       run_script "${testcase}" "02_PocExecutionInspector" && \
-       run_script "${testcase}" "03_build_fuzz"; then
-    #    run_script "${testcase}" "03_build_fuzz" && \
-    #    run_script "${testcase}" "04_racing"; then
-        end_time=$(date +%s)
-        elapsed_time=$((end_time - start_time))
-        echo "${testcase} succeeded in ${elapsed_time} seconds"
+    for script in "${scripts[@]}"; do
+        if ! run_script "${testcase}" "${script}"; then
+            success=false
+            break
+        fi
+    done
+
+    end_time=$(date +%s)
+    elapsed_time=$((end_time - start_time))
+
+    if $success; then
+        log_message "INFO" "${testcase} succeeded in ${elapsed_time} seconds" "$GREEN"
         echo "${testcase} succeeded in ${elapsed_time} seconds" >> "$overall_status_file"
         echo "${testcase}" >> "$completed_cases_file"
         return 0
     else
-        end_time=$(date +%s)
-        elapsed_time=$((end_time - start_time))
-        echo "${testcase} failed in ${elapsed_time} seconds"
+        log_message "ERROR" "${testcase} failed in ${elapsed_time} seconds" "$RED"
         echo "${testcase} failed in ${elapsed_time} seconds" >> "$overall_status_file"
-        echo "${testcase}" >> "$completed_cases_file"
+        # echo "${testcase}" >> "$completed_cases_file"
         return 1
     fi
     
@@ -97,24 +137,29 @@ test_cases=$(ls -d */ | sort -V | tr -d '/')
 # Export functions and variables for GNU Parallel
 export -f run_script
 export -f process_test_case
+export -f log_message
 export num_jobs
 export completed_cases_file
 export overall_status_file
 export TEST_ROOT
+export GREEN
+export RED
+export NC
+export scripts
 
 # Run the test cases in parallel
-parallel -k -j "${num_jobs}" process_test_case ::: ${test_cases}
+parallel -k --lb -j "${num_jobs}" process_test_case ::: ${test_cases}
 
 # Summarize results
-success_count=$(grep -c "succeeded" overall_status.log)
-failure_count=$(grep -c "failed" overall_status.log)
+success_count=$(grep -c "succeeded" "$overall_status_file")
+failure_count=$(grep -c "failed" "$overall_status_file")
 
 # Report overall status
-echo "=================================="
-echo "Overall Status"
-echo "Success: ${success_count}"
-echo "Failure: ${failure_count}"
-echo "=================================="
+log_message "INFO" "==================================" "$NC"
+log_message "INFO" "Overall Status" "$NC"
+log_message "INFO" "Success: ${success_count}" "$GREEN"
+log_message "INFO" "Failure: ${failure_count}" "$RED"
+log_message "INFO" "==================================" "$NC"
 
 # Exit with the number of failures as the exit status
 exit ${failure_count}

@@ -14,6 +14,6 @@ export AFL_CC=clang-6.0
 # build instrument version for fuzzing
 cd perl5
 make clean
-./Configure -Dprefix=$PWD/build -DCC=$RACING_DIR/Racing-code/afl-clang-fast -A ccflags="-g -O0 -fsanitize=address -fPIC -poc_trace=$EVAL_DIR/temp_data/poc.addr2line" -Dld=$RACING_DIR/afl-clang-fast -A ldflags="-g -O0 -fsanitize=address"
+./Configure -Dprefix=$PWD/build -Dcc=$RACING_DIR/Racing-code/afl-clang-fast -A ccflags="-g -O0 -fsanitize=address -fPIC -poc_trace=$EVAL_DIR/temp_data/poc.addr2line" -Dld=$RACING_DIR/afl-clang-fast -A ldflags="-g -O0 -fsanitize=address" -Dusedevel -d -e -s
 make install.perl
-mv $PWD/build/bin/perl $EVAL_DIR/perl_fuzz
+mv $PWD/build/bin/perl5.31.7 $EVAL_DIR/perl_fuzz

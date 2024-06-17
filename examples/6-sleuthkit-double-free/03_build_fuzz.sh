@@ -16,7 +16,7 @@ make clean
 export AFL_CC=clang-6.0
 export AFL_CXX=clang++-6.0
 # build instrument version for fuzzing
-CC=$RACING_DIR/Racing-code/afl-clang-fast CXX=$RACING_DIR/afl-clang-fast++ LD=$CC CFLAGS="-g -O0 -fPIE -poc_trace=$EVAL_DIR/temp_data/poc.addr2line" CXXFLAGS=$CFLAGS LDFLAGS=$CFLAGS ./configure --disable-shared
+CC=$RACING_DIR/Racing-code/afl-clang-fast CXX=$RACING_DIR/Racing-code/afl-clang-fast++ LD=$CC CFLAGS="-g -O0 -fPIE -poc_trace=$EVAL_DIR/temp_data/poc.addr2line" CXXFLAGS=$CFLAGS LDFLAGS=$CFLAGS ./configure --disable-shared
 make
 
 mv $PWD/tools/fstools/fls $EVAL_DIR/fls_fuzz
