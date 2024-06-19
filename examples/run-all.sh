@@ -2,6 +2,20 @@
 
 TEST_ROOT=$PWD
 
+# ANSI color codes
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# Function to log messages with timestamp and severity
+log_message() {
+    local severity=$1
+    local message=$2
+    local color=$3
+    local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+    echo -e "${timestamp} [${severity}] ${color}${message}${NC}"
+}
+
 # Default number of parallel jobs
 num_jobs=1
 
@@ -12,7 +26,7 @@ while getopts "j:" opt; do
             num_jobs=$OPTARG
             ;;
         \? )
-            echo "Usage: cmd [-j number_of_parallel_jobs] <build|run>"
+            echo "Usage: cmd [-j number_of_parallel_jobs] <build|run|clean-run>"
             exit 1
             ;;
     esac
@@ -21,7 +35,7 @@ shift $((OPTIND -1))
 
 # Check for command argument
 if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 [-j number_of_parallel_jobs] <build|run>"
+    echo "Usage: $0 [-j number_of_parallel_jobs] <build|run|clean-run>"
     exit 1
 fi
 
@@ -38,29 +52,26 @@ if [ "$command" == "build" ]; then
 elif [ "$command" == "run" ]; then
     completed_cases_file="$TEST_ROOT/completed_cases.run.txt"
     overall_status_file="$TEST_ROOT/overall_status.run.log"
+elif [ "$command" == "clean-run" ]; then
+    rm -f $TEST_ROOT/completed_cases.run.txt
+    rm -f $TEST_ROOT/overall_status.run.log
+    # Clean up run directories
+    for testcase in $(ls -d */); do
+        cd $testcase
+        rm -rf afl-workdir-batch* 04_racing.log run_temp
+        log_message "INFO" "Cleaned afl-workdir-batch* directories in ${testcase}" "$NC"
+        cd $TEST_ROOT
+    done
+    exit 0
 else
     echo "Invalid command: $command"
-    echo "Usage: $0 [-j number_of_parallel_jobs] <build|run>"
+    echo "Usage: $0 [-j number_of_parallel_jobs] <build|run|clean-run>"
     exit 1
 fi
 
 # Create or clear the completed cases file
 >> "$completed_cases_file"
 >> "$overall_status_file"
-
-# ANSI color codes
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-NC='\033[0m' # No Color
-
-# Function to log messages with timestamp and severity
-log_message() {
-    local severity=$1
-    local message=$2
-    local color=$3
-    local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-    echo -e "${timestamp} [${severity}] ${color}${message}${NC}"
-}
 
 # Function to run a script and check its exit status
 run_script() {
@@ -151,7 +162,7 @@ export NC
 export command
 
 # Run the test cases in parallel
-parallel -k --lb -j "${num_jobs}" process_test_case ::: ${test_cases}
+parallel --lb -j "${num_jobs}" process_test_case ::: ${test_cases}
 
 # Summarize results
 success_count=$(grep -c "succeeded" "$overall_status_file")
