@@ -1,7 +1,7 @@
 #!/bin/bash
 EVAL_DIR=`pwd`
 AFL_DIR=${AFL_DIR:=/Racing-eval/Racing-code}
-RUN_N=${RUN_N:-5}
+RUN_N=${RUN_N:-1}
 
 i=0
 

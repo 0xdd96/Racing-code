@@ -15,6 +15,6 @@ make clean
 
 export AFL_CC=clang-6.0
 # build instrument version for fuzzing
-$RACING_DIR/Racing-code/afl-clang-fast -keep_intermediate -Wall -O0 -DEZXML_TEST -g -ggdb -poc_trace=$EVAL_DIR/temp_data/poc.addr2line -o ezxml_fuzz ezxml.c
+$RACING_DIR/Racing-code/afl-clang-fast -Wall -O0 -DEZXML_TEST -g -ggdb -poc_trace=$EVAL_DIR/temp_data/poc.addr2line -o ezxml_fuzz ezxml.c
 
 mv $PWD/ezxml_fuzz $EVAL_DIR/ezxml_fuzz
