@@ -3,7 +3,7 @@ FROM ubuntu:20.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
-    && apt-get install -y wget curl make gcc g++ clang-6.0 autoconf pkg-config git python3 parallel flex bison libtool zlib1g-dev ruby cmake nasm texinfo
+    && apt-get install -y wget curl make gcc g++ clang-6.0 autoconf pkg-config git python3 parallel flex bison libtool zlib1g-dev ruby cmake nasm texinfo libjpeg-dev
 
 RUN mkdir /Racing-eval && cd /Racing-eval \
     && wget -q -c http://software.intel.com/sites/landingpage/pintool/downloads/pin-3.15-98253-gb56e429b1-gcc-linux.tar.gz \
@@ -32,7 +32,9 @@ RUN cd ${RACING_DIR}/Racing-code/llvm_mode && make
 RUN git clone https://github.com/RUB-SysSec/aurora
 
 ENV AURORA_GIT_DIR=/Racing-eval/aurora
-RUN cd ${AURORA_GIT_DIR}/tracing && CC=gcc CXX=g++ make
+RUN cd ${AURORA_GIT_DIR}/tracing && CC=gcc CXX=g++ make \
+    && mkdir -p ${PIN_ROOT}/source/tools/AuroraTracer \
+    && cp -r ${AURORA_GIT_DIR}/tracing/* ${PIN_ROOT}/source/tools/AuroraTracer
 
 RUN wget -q -c https://lcamtuf.coredump.cx/afl/releases/afl-latest.tgz && tar xf afl-latest.tgz && mv afl-2.52b afl-fuzz
 ##  apply patch & build
