@@ -1,6 +1,5 @@
 import os
 import re
-import json
 import argparse
 from datetime import timedelta
 
@@ -18,29 +17,20 @@ def parse_time_string(time_str):
         )
     return None
 
-def parse_log_file(file_path):
+def parse_log_file(file_path, ground_truth_loc):
     with open(file_path, 'r') as f:
         log_content = f.read()
-
-    blocks = re.findall(r'inputs:.*?(?=inputs:|Total mutation_inputs:)', log_content, re.DOTALL)
+    
+    blocks = log_content.split('rank update at: ')
     if not blocks:
         return [], None
 
     last_block = blocks[-1]
-    ranking_entries = re.findall(r'\[top-\d+\] inst_id: \d+, score: [\d\.]+, predicate: .*?, inst: .*? at .*?:\d+', last_block)
+    ranking_entries = last_block.split('\n')
     ranking_info = []
     for entry in ranking_entries:
-        match = re.search(r'\[top-(\d+)\] inst_id: (\d+), score: ([\d\.]+), predicate: (.*?), inst: (.*?) at (.*?:\d+)', entry)
-        if match:
-            rank, inst_id, score, predicate, inst, file_loc = match.groups()
-            ranking_info.append({
-                "rank": int(rank),
-                "inst_id": inst_id,
-                "score": float(score),
-                "predicate": predicate,
-                "inst": inst,
-                "file_loc": file_loc
-            })
+        if ground_truth_loc in entry:
+            ranking_info.append(entry)
 
     time_used_match = re.search(r'Finished at: (.*?)!', last_block)
     time_used = parse_time_string(time_used_match.group(1).strip()) if time_used_match else None
@@ -60,96 +50,80 @@ def get_ground_truth(file_path):
 
     return ground_truth
 
-def check_single(log_file_path, ground_truth_file_path, testcase_id):
-    ranking_info, time_used = parse_log_file(log_file_path)
-    ground_truth_loc = get_ground_truth(ground_truth_file_path).get(testcase_id)
 
-    result = {
-        "testcase_id": testcase_id,
-        "log_file": log_file_path,
-        "ground_truth_loc": ground_truth_loc,
-        "best_ranking_info": None,
-        "time_used": time_used
-    }
+def process_testcase(base_path, testcase_name, ground_truth_file_path):
+    log_file_path = os.path.join(base_path, testcase_name, f"afl-workdir-batch0", "ranked_file")
+    if not os.path.exists(log_file_path):
+        return None
 
-    if ground_truth_loc:
-        filtered_entries = [entry for entry in ranking_info if entry["file_loc"] == ground_truth_loc]
-        if filtered_entries:
-            best_ranking_info = filtered_entries[0]
-            result["best_ranking_info"] = best_ranking_info
-
-    return result
-
-def calculate_averages(values):
-    values = [v for v in values if v is not None]
-    return round(sum(values) / len(values), 2) if values else None
-
-def calculate_averages2(values):
-    values = [v for v in values if v is not None]
-    return sum(values, timedelta()) / len(values) if values else None
-
-def process_testcase(base_path, testcase_name, ground_truth_file_path, num_runs):
-    results = []
-    for run in range(0, num_runs):
-        log_file_path = os.path.join(base_path, testcase_name, f"afl-workdir-batch{run}", "ranked_file")
-        if not os.path.exists(log_file_path):
-            results.append(None)
-            continue
-        
-        result = check_single(log_file_path, ground_truth_file_path, testcase_name)
-        # results.append(result if result.get("best_ranking_info") else None)
-        results.append(result)
     
-    rankings = [result['best_ranking_info']['rank'] if result and result['best_ranking_info'] else None for result in results]
-    times = [result['time_used'] if result and result['time_used'] else None for result in results]
+    ground_truth_loc = get_ground_truth(ground_truth_file_path).get(testcase_name)
+    ranking_info_string = ''
+    time_used = 0
+    if ground_truth_loc:
+        ranking_info, time_used = parse_log_file(log_file_path, ground_truth_loc)
+        ranking_info_string = "\n".join(ranking_info)
 
-    ranking_avg = calculate_averages(rankings)
-    time_avg = calculate_averages2(times)
+    return ranking_info_string, time_used
 
-    return rankings + [ranking_avg], times + [time_avg]
+def print_table(data):
+    header = ["Testcase", "Ranking Info", "Time"]
 
-def check_all(base_path, ground_truth_file_path, num_runs):
+    col_widths = [max(len(str(item[0])) for item in data), 0, max(len(str(item[2])) for item in data)]
+    col_widths[0] = max(len(header[0]), col_widths[0])
+    col_widths[2] = max(len(header[2]), col_widths[2])
+    
+    for item in data:
+        lines = item[1].split('\n')
+        max_line_length = max(len(line) for line in lines)
+        if max_line_length > col_widths[1]:
+            col_widths[1] = max_line_length
+    col_widths[1] = max(len(header[1]), col_widths[1])
+
+    header_row = " | ".join(header[i].ljust(col_widths[i]) for i in range(len(header)))
+    print(header_row)
+    print("-" * len(header_row))
+
+    for row in data:
+        ranking_info_lines = row[1].split('\n')
+        max_lines = len(ranking_info_lines)
+        
+        testcase = [row[0]] + [''] * (max_lines - 1)
+        time_str = [str(row[2])] + [''] * (max_lines - 1)
+        
+        for i in range(max_lines):
+            row_str = f"{testcase[i].ljust(col_widths[0])} | {ranking_info_lines[i].ljust(col_widths[1])} | {time_str[i].ljust(col_widths[2])}"
+            print(row_str)
+        
+        if row != data[-1]:
+            print("-" * len(header_row))
+    print("-" * len(header_row))
+
+def check_all(base_path, ground_truth_file_path):
     ground_truth_map = get_ground_truth(ground_truth_file_path)
 
-    columns = [f'ranking-{i}' for i in range(1, num_runs + 1)] + ['ranking-avg'] + \
-              [f'time-{i}' for i in range(1, num_runs + 1)] + ['time-avg']
-    header = ['testcase'] + columns
     results = []
-
     for testcase_name in ground_truth_map.keys():
-        testcase_results = process_testcase(base_path, testcase_name, ground_truth_file_path, num_runs)
-        results.append([testcase_name] + testcase_results[0] + testcase_results[1])
-
-    # Print results in table format
-    print("\t".join(header))
-    for result in results:
-        # result_line = [f"{item:.2f}" if isinstance(item, float) else '-' if item is None else str(item) for item in result]
-        result_line = [str(item) if item else '-' for item in result]
-        print("\t".join(result_line))
+        testcase_results = process_testcase(base_path, testcase_name, ground_truth_file_path)
+        if testcase_results:
+            results.append([testcase_name] + [testcase_results[0]] + [testcase_results[1]])
+        else:
+            results.append([testcase_name] + ["test case failed, please check 04_racing.log!"] + ["-"])
+    print_table(results)
+    return
 
 def main():
     parser = argparse.ArgumentParser(description='Check ranking results for single or multiple test case runs.')
     subparsers = parser.add_subparsers(dest='command')
 
-    # Subparser for single test case run
-    parser_check = subparsers.add_parser('check', help='Check a single test case run')
-    parser_check.add_argument('ground_truth_file_path', type=str, help='Path to the ground truth file.')
-    parser_check.add_argument('log_file_path', type=str, help='Path to the log file.')
-    parser_check.add_argument('testcase_id', type=str, help='ID of the testcase to use for ground truth.')
-
-    # Subparser for multiple test case runs
     parser_check_all = subparsers.add_parser('check_all', help='Check multiple test case runs')
     parser_check_all.add_argument('ground_truth_file_path', type=str, help='Path to the ground truth file.')
     parser_check_all.add_argument('base_path', type=str, help='Base path where the test case directories are located.')
-    parser_check_all.add_argument('num_runs', type=int, default=1, help='Number of runs for each test case.')
 
     args = parser.parse_args()
 
-    if args.command == 'check':
-        result = check_single(args.log_file_path, args.ground_truth_file_path, args.testcase_id)
-        print(json.dumps(result, indent=4, default=str))
-    elif args.command == 'check_all':
-        check_all(args.base_path, args.ground_truth_file_path, args.num_runs)
+    if args.command == 'check_all':
+        check_all(args.base_path, args.ground_truth_file_path)
 
 if __name__ == "__main__":
     main()
