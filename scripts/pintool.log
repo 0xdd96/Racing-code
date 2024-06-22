@@ -1,0 +1,11 @@
+Pin: pin-3.15-98253-b56e429b1
+Copyright 2002-2019 Intel Corporation.
+ [*] Pintool: /home/user/docker_share/tool/Racing/release/scripts/../InstTracer/obj-intel64/inst_tracer.so
+ [*] Target:  /home/user/evaluation/pin-3.15-98253-gb56e429b1-gcc-linux/intel64/bin/pinbin
+ [+] Called parse_image on /home/user/docker_share/CVE-test/mruby/mruby-1/test/mruby_trace
+ [*] Load offset: 0x0000555555554000
+ [+] Called parse_image on /lib64/ld-linux-x86-64.so.2
+ [+] Called parse_image on [vdso]
+ [+] Called parse_image on /lib/x86_64-linux-gnu/libm.so.6
+ [+] Called parse_image on /lib/x86_64-linux-gnu/libc.so.6
+ [=] Completed trace.

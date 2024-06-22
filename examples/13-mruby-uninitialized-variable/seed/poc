@@ -1,0 +1,8 @@
+orig1 = "0" * 4
+orig2 = "\xC9" * 4
+
+packed1 = (orig1).unpack("m").pack("m0")
+packed2 = (orig2).unpack("m").pack("m0")
+
+puts packed1 + " (" + packed1.unpack("CCCC").pack("C*").unpack("H*")[0] + ") == " + orig1 + " (" + orig1.unpack("CCCC").pack("C*").unpack("H*")[0] + ")"
+puts packed2 + " (" + packed2.unpack("CCCC").pack("C*").unpack("H*")[0] + ") != " + orig2 + " (" + orig2.unpack("CCCC").pack("C*").unpack("H*")[0] + ")"
