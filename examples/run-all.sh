@@ -162,7 +162,8 @@ export NC
 export command
 
 # Run the test cases in parallel
-parallel --lb -j "${num_jobs}" process_test_case ::: ${test_cases}
+# parallel --lb -j "${num_jobs}" process_test_case ::: ${test_cases}
+echo "${test_cases}" | xargs -n 1 -P "${num_jobs}" -I {} bash -c 'process_test_case "$@"' _ {}
 
 # Summarize results
 success_count=$(grep -c "succeeded" "$overall_status_file")
