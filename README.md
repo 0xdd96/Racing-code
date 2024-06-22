@@ -1,8 +1,10 @@
 # Racing: Efficient Vulnerability Root-Cause Analysis through Reinforcement Learning on Counterexamples
 
-<p><a href="https://www.usenix.org/conference/usenixsecurity24/presentation/xu-dandan"> <img alt="racing paper" align="right" width="200"  src="paper.jpg"></a></p>
-
 Racing is an efficient statistical Root-Cause Analysis (RCA) solution that employs reinforcement learning. This repository contains the proof-of-concept implementation of our [paper](https://www.usenix.org/conference/usenixsecurity24/presentation/xu).
+
+<p align="center">
+<a href="https://www.usenix.org/conference/usenixsecurity24/presentation/xu-dandan"> <img alt="racing paper" width="200"  src="paper.jpg"></a>
+</p>
 
 ## Environment Setup
 
@@ -89,5 +91,4 @@ Please cite Racing use the following BibTex code:
     year = {2024}
     booktitle = {33rd {USENIX} Security Symposium ({USENIX} Security 24)},
 }
-```
 ```
