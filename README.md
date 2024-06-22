@@ -6,6 +6,19 @@ Racing is an efficient statistical Root-Cause Analysis (RCA) solution that emplo
 <a href="https://www.usenix.org/conference/usenixsecurity24/presentation/xu-dandan"> <img alt="racing paper" width="200"  src="paper.jpg"></a>
 </p>
 
+## TL;DR
+
+You may use our [Dockerfile](Dockerfile) to setup a testing environment.
+
+```bash
+# 1. build racing-eval image
+docker build -t racing-eval:latest .
+# 2. run racing-eval container
+docker run --name racing-eval --init -d -v $PWD/examples:/Racing-eval/examples racing-eval:latest tail -f /dev/null
+# 3. attach to the container
+docker exec -ti racing-eval bash
+```
+
 ## Environment Setup
 
 Before you start everything, make sure to set the following configurations on your host machine (as required by AFL fuzzing).
@@ -78,9 +91,15 @@ cd examples/21-ezXML-nullptr-dereference
 ./03_build_fuzz.sh
 # step 4: start racing's fuzzing process (rca)
 ./04_racing.sh
-
 ```
-## Citing this paper ##
+
+After the above steps, please check `afl-workdir-batch0/ranked_file` for the ranking of predicates.
+
+> [!WARNING]  
+> When compiling the binary using racing's afl-clang-fast, please *DO NOT* enable `-j` as racing needs to generate sequential IDs for instructions.
+
+
+## Cite our paper
 
 Please cite Racing use the following BibTex code:
 
