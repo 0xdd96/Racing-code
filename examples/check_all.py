@@ -141,7 +141,7 @@ def main():
     parser_check_all = subparsers.add_parser('check_all', help='Check multiple test case runs')
     parser_check_all.add_argument('ground_truth_file_path', type=str, help='Path to the ground truth file.')
     parser_check_all.add_argument('base_path', type=str, help='Base path where the test case directories are located.')
-    parser_check_all.add_argument('num_runs', type=int, default=5, help='Number of runs for each test case.')
+    parser_check_all.add_argument('num_runs', type=int, default=1, help='Number of runs for each test case.')
 
     args = parser.parse_args()
 

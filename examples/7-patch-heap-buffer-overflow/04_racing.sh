@@ -12,7 +12,7 @@ do
         AFL_WORKDIR=$EVAL_DIR/afl-workdir-batch$i
         mkdir -p $AFL_WORKDIR
         # run AFL
-	(cd run_temp; timeout 43200 $AFL_DIR/afl-fuzz -C -d -m none -i $EVAL_DIR/seed -o $AFL_WORKDIR -s $EVAL_DIR/temp_data/trace-id.log -- $EVAL_DIR/patch_fuzz -o outfile -Rf) 
+	(cd run_temp; $AFL_DIR/afl-fuzz -C -d -m none -i $EVAL_DIR/seed -o $AFL_WORKDIR -s $EVAL_DIR/temp_data/trace-id.log -- $EVAL_DIR/patch_fuzz -o outfile -Rf) 
         i=$(($i+1));
 done
 
