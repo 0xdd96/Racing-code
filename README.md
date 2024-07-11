@@ -6,22 +6,10 @@ Racing is an efficient statistical Root-Cause Analysis (RCA) solution that emplo
 <a href="https://www.usenix.org/conference/usenixsecurity24/presentation/xu-dandan"> <img alt="racing paper" width="200"  src="paper.jpg"></a>
 </p>
 
-## TL;DR
+## System Requirement
 
-You may use our [Dockerfile](Dockerfile) to setup a testing environment.
+Racing was evaluated on an x86 Ubuntu 20.04 machine. Before you start everything, make sure to set the following configurations on your host machine (as required by AFL fuzzing).
 
-```bash
-# 1. build racing-eval image
-docker build -t racing-eval:latest .
-# 2. run racing-eval container
-docker run --name racing-eval --init -d -v $PWD/examples:/Racing-eval/examples racing-eval:latest tail -f /dev/null
-# 3. attach to the container
-docker exec -ti racing-eval bash
-```
-
-## Environment Setup
-
-Before you start everything, make sure to set the following configurations on your host machine (as required by AFL fuzzing).
 ```
 ### use root permission if necessary
 
@@ -33,7 +21,22 @@ echo performance | tee cpu*/cpufreq/scaling_governor
 echo 0 | tee /proc/sys/kernel/randomize_va_space
 ```
 
-Racing was evaluated on Ubuntu 20.04. To obtain a clean environment for testing, one can pull the `ubuntu:20.04` image and launch the following container.
+## TL;DR
+
+You may use our [Dockerfile](Dockerfile) to setup a testing environment. It automatically performs steps `S1 & S2` below. After the image has been built, please jump to step `S3` to run the commands inside the `racing-eval` container.
+
+```bash
+# 1. build racing-eval image
+docker build -t racing-eval:latest .
+# 2. run racing-eval container
+docker run --name racing-eval --init -d -v $PWD/examples:/Racing-eval/examples racing-eval:latest tail -f /dev/null
+# 3. attach to the container
+docker exec -ti racing-eval bash
+```
+
+## S1. Environment Setup
+
+To obtain a clean environment for testing, one can pull the `ubuntu:20.04` image and launch the following container.
 ```
 # download racing code
 git clone https://github.com/RacingN4th/racing-code
@@ -54,7 +57,7 @@ tar -xzf pin*.tar.gz
 export PIN_ROOT="$PWD/pin-3.15-98253-gb56e429b1-gcc-linux"
 ```
 
-## Racing Build Steps
+## S2. Racing Build Steps
 
 Racing consists of the following components
 - `InstTracer`: A simple tracer to extract instructions that are covered by a vulnerability PoC.
@@ -77,7 +80,7 @@ cd ${RACING_DIR}/Racing-final/llvm_mode
 make
 ```
 
-## Testing Steps
+## S3. Testing Steps
 
 The `examples` folder contains the scripts for analyzing the 30 vulnerabilities used in our paper. To reproduce it, please refer to the following example:
 ```bash
