@@ -43,11 +43,11 @@ git clone https://github.com/RacingN4th/racing-code
 export RACING_DIR=$PWD/racing-code
 # pull and launch container
 docker pull ubuntu:20.04
-docker run --name racing-rca -v ${RACING_DIR}:/Racing-final -d -it ubuntu:20.04 bash
+docker run --name racing-eval -v ${RACING_DIR}:/Racing-final -d -it ubuntu:20.04 bash
 ```
 Then attach into the container and install the following dependencies
 ```
-docker exec -it racing-rca bash
+docker exec -it racing-eval bash
 
 ### run commands below inside container
 apt-get update
