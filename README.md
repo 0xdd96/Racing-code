@@ -1,4 +1,4 @@
-# Racing: Efficient Vulnerability Root-Cause Analysis through Reinforcement Learning on Counterexamples
+# Racing on the Negative Force: Efficient Vulnerability Root-Cause Analysis through Reinforcement Learning on Counterexamples
 
 Racing is an efficient statistical Root-Cause Analysis (RCA) solution that employs reinforcement learning. This repository contains the proof-of-concept implementation of our [paper](https://www.usenix.org/conference/usenixsecurity24/presentation/xu).
 
